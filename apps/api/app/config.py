@@ -6,18 +6,38 @@ defaulting -- a missing DATABASE_URL, REDIS_URL, or API_KEY should never be
 discovered later as a runtime error under load.
 """
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# pydantic-settings resolves a relative env_file against the process's
+# current working directory at startup, not against this file's location.
+# The documented local-setup steps (see README) run uvicorn from apps/api/,
+# where a bare ".env" does not exist -- only the repo-root one does. That
+# silently skipped a real .env file rather than erroring, and Settings()
+# fell through to whatever happened to already be exported in the shell.
+# Resolving explicitly from this file's location makes env loading work the
+# same regardless of the process's working directory.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_ENV_FILE = _REPO_ROOT / ".env"
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore"
+    )
 
     environment: str = "development"
 
     database_url: str
     redis_url: str
     api_key: str
+
+    # Comma-separated list of allowed frontend origins outside development
+    # (where allowed origins are the fixed local dev ports instead -- see
+    # main.py). Unset by design: no production origin exists yet, and CORS
+    # must not default to permissive just because this is unconfigured.
+    cors_allowed_origins: str | None = None
 
     # Provisioned for later phases; intentionally optional until their
     # adapters exist, so Phase 1 does not require Razorpay/Anthropic keys.
