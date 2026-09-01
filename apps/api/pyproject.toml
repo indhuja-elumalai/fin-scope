@@ -8,6 +8,12 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection pattern (`db: Session = Depends(get_db)`)
+# calls Depends() as a parameter default by design; without this, B008
+# would flag every route that takes a DB session.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Header"]
+
 [tool.mypy]
 python_version = "3.13"
 ignore_missing_imports = true
