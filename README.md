@@ -23,21 +23,28 @@ approved actions, and verifies the outcome.
 FIND -> INVESTIGATE -> ROOT CAUSE -> IMPACT -> SIMULATE -> DECIDE -> POLICY -> ACT -> VERIFY -> LEARN
 ```
 
-None of these stages are implemented yet. This repository currently
-implements the foundation and the deterministic event-ingestion layer
-(FIND itself -- anomaly detection -- has not started) described in
-section 12.
+This repository currently implements the foundation, the deterministic
+event-ingestion layer, and a deterministic FIND -> dominant-signal ->
+IMPACT slice (rule-based incident detection, a frequency-based "dominant
+signal" heuristic, and a currency-safe impact estimate -- not causal
+root-causing, and no AI/LLM call anywhere in this slice) described in
+section 12. ROOT CAUSE (causal reasoning), SIMULATE, DECIDE, POLICY, ACT,
+VERIFY, and LEARN have not started.
 
 ## 4. Why AI is used
 
-Claude is used where ambiguity and reasoning exist: hypothesis generation,
-evidence interpretation, root-cause ranking, incident summarization, and
-proposing bounded interventions with rationale. This begins in the
-Investigation phase (not yet implemented).
+A reasoning model is used where ambiguity and reasoning exist: hypothesis generation,
+evidence interpretation, causal root-cause ranking, incident summarization,
+and proposing bounded interventions with rationale. This begins in a later,
+not-yet-implemented phase that reasons over the deterministic evidence
+Phase 3 collects. Phase 3 itself makes no AI/LLM call anywhere -- its
+"dominant signal" is a deterministic event-type frequency heuristic, not a
+causal claim, and must not be confused with the AI-driven root-cause
+reasoning described here.
 
 ## 5. Where AI is deliberately avoided
 
-Claude is never used for financial arithmetic, anomaly thresholds, policy
+A reasoning model is never used for financial arithmetic, anomaly thresholds, policy
 enforcement, authorization, idempotency, execution, or audit logging. Those
 are deterministic by design, and AI has no path to directly executing a
 financial action — every AI output passes through schema validation and a
@@ -55,8 +62,8 @@ Backend (FastAPI)
 Event      Investi-  Simulation      (not yet implemented)
 Engine     gation
   |           |      |
-Anomaly/   Claude    Financial
-Stats      AI        Model
+Anomaly/   AI-driven  Financial
+Stats      reasoning  Model
   |           |      |
   +-----+-----+-----+
         |
@@ -76,8 +83,12 @@ Stats      AI        Model
 Phase 1 establishes the backend/frontend skeleton, the database (`merchants`,
 `audit_log`), API-key auth, and health checks that everything above will be
 built on. Phase 2 adds the `financial_events` table and the ingestion/
-retrieval API that will feed the Event Engine and, later, FIND -- FIND's
-actual detection logic has not been built yet.
+retrieval API that feeds the Event Engine. Phase 3 adds a deterministic
+FIND rule (a concerning-event count threshold within a rolling window), a
+deterministic "dominant signal" frequency heuristic, and a currency-safe
+impact calculation, persisted as `investigations` -- this is rule-based
+detection, not the AI-driven root-cause reasoning shown in the
+architecture diagram above; that remains a later, unimplemented phase.
 
 ## 7. Technology stack
 
@@ -85,7 +96,7 @@ actual detection logic has not been built yet.
 - Backend: Python, FastAPI, Pydantic
 - Database: PostgreSQL (local Docker for development; Neon later)
 - Cache/queue: Redis (local Docker for development; managed Redis later)
-- AI: Anthropic Claude (not yet integrated)
+- AI: a hosted reasoning model (not yet integrated)
 - Payments: Razorpay Test Mode (not yet integrated)
 
 ## 8. Sandbox
@@ -114,7 +125,7 @@ Not yet implemented.
 |------|------|-----------------|--------|
 | 1 | Foundation | Working project skeleton | ✅ COMPLETE |
 | 2 | Event Engine | Financial event ingestion | ✅ COMPLETE |
-| 3 | FIND | Anomaly detection | ⬜ |
+| 3 | Incident Investigation | FIND + dominant-signal heuristic + impact | ✅ COMPLETE |
 | 4 | Investigation | Evidence + hypotheses | ⬜ |
 | 5 | Root Cause | Evidence-backed ranking | ⬜ |
 | 6 | Simulation | Controlled financial sandbox | ⬜ |
@@ -196,16 +207,66 @@ process rather than a code defect -- all documented in
 
 Status: COMPLETE
 
+### Phase 3 — Incident Investigation (FIND + Dominant Signal + Impact)
+
+Goal: the smallest coherent deterministic slice of FIND -> DOMINANT SIGNAL ->
+IMPACT. Given a merchant, evaluate whether a rule-based incident is
+currently (or, via an explicit `as_of`, was previously) active, reconstruct
+the evidence timeline, surface a deterministic "dominant signal" frequency
+heuristic over that evidence, and compute a currency-safe financial impact
+estimate. This is explicitly not causal root-cause reasoning (that is a
+later, AI-assisted phase -- see section 4) and not SIMULATE, DECIDE, POLICY,
+ACT, VERIFY, or LEARN. No AI/LLM call is made anywhere in this phase.
+
+Delivered:
+- `investigations` table (Alembic `0003`), FK to `merchants`; every
+  investigation run is persisted, including runs with no incident detected,
+  the same auditable-by-default principle `audit_log` already follows
+- `POST/GET /v1/investigations`, `GET /v1/investigations/{id}` (API-key
+  protected), request body accepts an optional deterministic `as_of` to
+  investigate a past window instead of only "now"
+- Deterministic domain logic (`app/domain/investigations.py`): a rolling
+  60-minute window, a >=3 concerning-event count threshold
+  (`payment_failed`, `settlement_delayed`, `gateway_degraded`), a
+  frequency-based dominant-signal heuristic with deterministic tie-breaking,
+  and a currency-safe impact breakdown that never sums across currencies
+  and tracks (never drops or zeroes) events with an unknown amount
+- Every investigation writes an `audit_log` row
+- `apps/web/investigations`, `apps/web/investigations/[id]`: minimal
+  functional UI (trigger, list, filter, detail with timeline/signal/impact)
+  through the same server-side Route Handler proxy pattern as Phase 2
+
+Verification: all automated checks passed on the project owner's machine --
+Docker Compose Postgres + Redis startup, Alembic upgrade `0002` -> `0003`,
+Alembic downgrade `0003` -> `0002` -> `0003`, backend test suite (44
+passed), ruff (all checks passed), mypy (no issues in 25 source files),
+the live backend investigation flow (merchant creation, event ingestion,
+investigation trigger/list/detail, auth, 404s), frontend `tsc`/lint/build,
+security/git hygiene checks, and Docker Compose teardown. The manual
+browser end-to-end walkthrough also passed, confirming: `/investigations`
+loads; merchant selection and filtering work; a no-incident investigation
+(no concerning events) is reported correctly; 3 concerning `payment_failed`
+events for a merchant trigger a detected incident; the 60-minute detection
+window is respected; the dominant signal displays correctly and is
+explicitly labeled a heuristic, not a causal finding; currency-safe impact
+is correct (100 INR + 75 INR + 50 INR = 225 INR); unknown-amount events are
+handled correctly; the evidence timeline displays in chronological order
+with working links to each event; and investigation detail/persistence
+works.
+
+Status: COMPLETE
+
 ## 13. Phase completion status
 
-Phases 1 and 2 are COMPLETE (implemented, verified, documented). No later
-phase has any implementation yet.
+Phases 1, 2, and 3 are COMPLETE (implemented, verified, documented). No
+later phase has any implementation yet.
 
 ## 14. Verification results
 
-See `docs/verification/phase-01.md` and `docs/verification/phase-02.md` for
-the full checklists, exact commands, and the issues found and fixed during
-each phase's verification.
+See `docs/verification/phase-01.md` and `docs/verification/phase-02.md`
+for the full checklists, exact commands, and the issues found and fixed
+during Phase 1 and Phase 2 verification. Phase 3's results are summarized
+directly below, since no separate `docs/verification/phase-03.md` exists.
 
 Phase 1 summary: 9/9 backend tests passed, ruff clean, mypy clean, both
 Alembic directions verified, live DB/Redis health and API-key auth checks
@@ -216,6 +277,17 @@ Alembic directions verified, live merchant/event CRUD, auth, idempotency,
 and CORS checks all passed against real Postgres/Redis, frontend lint and
 production build both succeeded, full manual end-to-end flow confirmed
 through the browser.
+
+Phase 3 summary: 44/44 backend tests passed, ruff clean, mypy clean (25
+source files), both Alembic directions verified, the live backend
+investigation flow (merchant/event/investigation creation, detection,
+dominant signal, impact, auth, 404s) all passed, frontend lint and
+production build both succeeded, security/git hygiene checks passed, and
+the manual browser end-to-end walkthrough also passed (detection, the
+dominant-signal display labeled as a heuristic rather than a cause,
+currency-safe impact, unknown-amount handling, evidence timeline ordering
+and links, and investigation persistence all confirmed through the
+browser).
 
 ## 15. Local setup
 
@@ -241,11 +313,14 @@ npm run dev
 ```
 
 Then visit `http://localhost:3000` for backend health,
-`http://localhost:3000/merchants` to create/list merchants, and
-`http://localhost:3000/events` to ingest and inspect financial events.
+`http://localhost:3000/merchants` to create/list merchants,
+`http://localhost:3000/events` to ingest and inspect financial events, and
+`http://localhost:3000/investigations` to run and inspect incident
+investigations.
 
-Or run `bash scripts/verify-phase-1.sh` / `bash scripts/verify-phase-2.sh` to
-do all of the above plus each phase's full verification suite in one pass.
+Or run `bash scripts/verify-phase-1.sh` / `bash scripts/verify-phase-2.sh` /
+`bash scripts/verify-phase-3.sh` to do all of the above plus each phase's
+full verification suite in one pass.
 
 ## 16. Environment variables
 
@@ -265,26 +340,36 @@ reaches the browser. `.env.local` is never committed.
 ## 17. Testing
 
 Backend: `pytest` (unit tests for config/auth, integration tests for
-`/health` against real and simulated-failure Postgres/Redis, and for the
+`/health` against real and simulated-failure Postgres/Redis, for the
 merchant/event API -- creation, listing, filtering, 404s, auth, invalid
-input, and idempotent replay). Frontend: `npx tsc --noEmit`, `npm run lint`,
-`npm run build`.
+input, and idempotent replay -- and for the investigation API -- detection
+threshold, window boundaries, non-concerning event types, the dominant-
+signal heuristic and its tie-breaking, currency-safe impact calculation,
+unknown-amount tracking, evidence ordering, `as_of` handling, persistence
+even without an incident, filtering, auth, and 404s). Frontend:
+`npx tsc --noEmit`, `npm run lint`, `npm run build`.
 
 ## 18. Known limitations
 
-- No anomaly detection or later-stage business logic exists yet — FIND
-  through LEARN are all future phases. Phase 2 only ingests and retrieves
-  financial events; nothing reads or analyzes them yet.
+- FIND detection is a fixed, code-level rule (>=3 concerning events in a
+  rolling 60-minute window) — not statistical/adaptive anomaly detection,
+  and not configurable via the API. The "dominant signal" is a frequency
+  heuristic, explicitly not causal root-cause reasoning. ROOT CAUSE
+  (causal), SIMULATE, DECIDE, POLICY, ACT, VERIFY, and LEARN are all future
+  phases.
+- Investigations are triggered only on demand via the API; there is no
+  background job or automatic re-evaluation on event ingestion.
 - The API-key auth model is intentionally minimal (single shared key); it is
   not a substitute for real multi-tenant auth if that becomes necessary.
 - The event-type vocabulary is a fixed set in code, duplicated as a constant
   on the frontend rather than served from an endpoint; fine at this scale.
-- Phases 1 and 2's automated verification (installs, tests, docker compose,
+- Phases 1-3's automated verification (installs, tests, docker compose,
   builds) were authored and written from an environment without
   package-registry or Docker access, and were executed by the project owner
   locally — see `docs/verification/phase-01.md` and
-  `docs/verification/phase-02.md` for exactly what ran, where, and the
-  issues that were found and fixed in each phase.
+  `docs/verification/phase-02.md` for Phase 1 and Phase 2; Phase 3's
+  results are summarized in sections 12 and 14 above rather than a
+  separate file, since `docs/verification/phase-03.md` was never created.
 
 ## 19. Future architecture
 

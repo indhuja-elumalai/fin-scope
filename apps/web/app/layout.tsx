@@ -36,6 +36,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           <Link href="/events" className="text-neutral-600 hover:text-neutral-900">
             Events
           </Link>
+          <Link href="/investigations" className="text-neutral-600 hover:text-neutral-900">
+            Investigations
+          </Link>
         </nav>
         {children}
       </body>
