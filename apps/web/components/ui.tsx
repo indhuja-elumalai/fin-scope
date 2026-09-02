@@ -72,6 +72,16 @@ const BADGE_VARIANTS = {
   // applied to an explicit assumption. See app.domain.simulation.
   projected: "bg-purple-50 text-purple-700 border-purple-200",
   assumption: "bg-amber-50 text-amber-800 border-amber-200",
+  // Phase 6 (decision evaluation + policy): the preferred-scenario callout
+  // is neither FACT, INFERENCE, nor PROJECTED -- it is a deterministic
+  // comparison outcome. See app.domain.decision_evaluation. The three
+  // policy outcomes get their own colors so ALLOWED /
+  // REQUIRES_HUMAN_APPROVAL / BLOCKED are distinguishable at a glance,
+  // independent of the DECISION badge above them.
+  decision: "bg-sky-50 text-sky-700 border-sky-200",
+  allowed: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  requires_approval: "bg-amber-50 text-amber-800 border-amber-200",
+  blocked: "bg-red-50 text-red-700 border-red-200",
 } as const;
 
 export function Badge({

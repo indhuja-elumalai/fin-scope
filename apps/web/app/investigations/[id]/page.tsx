@@ -122,6 +122,44 @@ type Simulation = {
   created_at: string;
 };
 
+type DecisionStatus = "completed" | "insufficient_evidence" | "no_eligible_scenario";
+
+type PolicyDecisionValue = "ALLOWED" | "REQUIRES_HUMAN_APPROVAL" | "BLOCKED";
+
+type EvaluatedCandidate = {
+  simulation_id: string;
+  scenario: SimulationScenario;
+  failed_event_count_delta: number;
+  estimated_recovery_by_currency: SimulationCurrencyAmount[];
+  // PROJECTED FINANCIAL EXPOSURE -- what policy thresholds actually apply
+  // to, never estimated_recovery_by_currency (see app.domain.policy).
+  projected_exposure_by_currency: SimulationCurrencyAmount[];
+  projected_exposure_amount_unknown_count: number;
+  eligible_event_count: number;
+};
+
+type EvaluationResultDetail = {
+  candidates: EvaluatedCandidate[];
+  preferred_scenario: SimulationScenario;
+  preferred_simulation_id: string;
+  reason: string;
+};
+
+type Decision = {
+  id: string;
+  investigation_id: string;
+  status: DecisionStatus;
+  evaluation_version: string;
+  policy_version: string | null;
+  candidate_simulation_ids: string[];
+  // {} when status !== "completed" -- see app.schemas.decision.DecisionRead.
+  evaluation_result: EvaluationResultDetail | Record<string, never>;
+  policy_decision: PolicyDecisionValue | null;
+  policy_reasons: string[];
+  failure_reason: string | null;
+  created_at: string;
+};
+
 const STATUS_COPY: Record<ReasoningStatus, { label: string; tone: "success" | "neutral" | "danger" }> = {
   completed: { label: "Reasoning complete", tone: "success" },
   insufficient_evidence: { label: "Insufficient evidence", tone: "neutral" },
@@ -144,6 +182,24 @@ const SCENARIO_ORDER: SimulationScenario[] = [
   "TARGET_AFFECTED_EVENT_TYPE",
 ];
 
+const POLICY_COPY: Record<
+  PolicyDecisionValue,
+  { label: string; variant: "allowed" | "requires_approval" | "blocked" }
+> = {
+  ALLOWED: { label: "Allowed", variant: "allowed" },
+  REQUIRES_HUMAN_APPROVAL: { label: "Requires human approval", variant: "requires_approval" },
+  BLOCKED: { label: "Blocked", variant: "blocked" },
+};
+
+function decisionSummaryLabel(decision: Decision): string {
+  if (decision.status === "insufficient_evidence") return "Insufficient evidence";
+  if (decision.status === "no_eligible_scenario") return "No eligible scenario";
+  if ("preferred_scenario" in decision.evaluation_result) {
+    return SCENARIO_LABELS[decision.evaluation_result.preferred_scenario];
+  }
+  return "—";
+}
+
 export default function InvestigationDetailPage() {
   const params = useParams<{ id: string }>();
   const [investigation, setInvestigation] = useState<Investigation | null>(null);
@@ -160,6 +216,11 @@ export default function InvestigationDetailPage() {
   const [selectedScenario, setSelectedScenario] = useState<SimulationScenario>("DO_NOTHING");
   const [simulationRunning, setSimulationRunning] = useState(false);
   const [simulationError, setSimulationError] = useState<string | null>(null);
+
+  const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [decisionsLoaded, setDecisionsLoaded] = useState(false);
+  const [decisionRunning, setDecisionRunning] = useState(false);
+  const [decisionError, setDecisionError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -254,6 +315,35 @@ export default function InvestigationDetailPage() {
     };
   }, [params.id]);
 
+  // Loads existing decision history, independent of reasoning/simulation
+  // loading above -- a decision reads whatever simulations already exist
+  // at evaluation time (see app.domain.decisions.run_decision).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadDecisions() {
+      try {
+        const response = await fetch(`/api/investigations/${params.id}/decisions?limit=20`);
+        if (!response.ok) {
+          throw new Error(`Failed to load decisions (${response.status})`);
+        }
+        const body = (await response.json()) as { items: Decision[] };
+        if (!cancelled) setDecisions(body.items);
+      } catch (err) {
+        if (!cancelled) {
+          setDecisionError(err instanceof Error ? err.message : "Failed to load decisions.");
+        }
+      } finally {
+        if (!cancelled) setDecisionsLoaded(true);
+      }
+    }
+
+    loadDecisions();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id]);
+
   const runSimulation = useCallback(async () => {
     setSimulationRunning(true);
     setSimulationError(null);
@@ -296,6 +386,27 @@ export default function InvestigationDetailPage() {
       setReasoningError(err instanceof Error ? err.message : "Failed to run reasoning.");
     } finally {
       setReasoningRunning(false);
+    }
+  }, [params.id]);
+
+  const runDecision = useCallback(async () => {
+    setDecisionRunning(true);
+    setDecisionError(null);
+    try {
+      const response = await fetch(`/api/investigations/${params.id}/decisions`, {
+        method: "POST",
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof body.detail === "string" ? body.detail : "Failed to evaluate decision."
+        );
+      }
+      setDecisions((prev) => [body as Decision, ...prev]);
+    } catch (err) {
+      setDecisionError(err instanceof Error ? err.message : "Failed to evaluate decision.");
+    } finally {
+      setDecisionRunning(false);
     }
   }, [params.id]);
 
@@ -463,6 +574,15 @@ export default function InvestigationDetailPage() {
             selectedScenario={selectedScenario}
             onSelectScenario={setSelectedScenario}
             onRun={runSimulation}
+          />
+
+          {/* 9. Decision evaluation + policy */}
+          <DecisionSection
+            decisions={decisions}
+            decisionsLoaded={decisionsLoaded}
+            running={decisionRunning}
+            error={decisionError}
+            onRun={runDecision}
           />
         </div>
       )}
@@ -802,6 +922,185 @@ function SimulationScopeCard({
           </p>
         )}
       </dl>
+    </div>
+  );
+}
+
+function DecisionSection({
+  decisions,
+  decisionsLoaded,
+  running,
+  error,
+  onRun,
+}: {
+  decisions: Decision[];
+  decisionsLoaded: boolean;
+  running: boolean;
+  error: string | null;
+  onRun: () => void;
+}) {
+  const latest = decisions[0] ?? null;
+  const history = decisions.slice(1);
+
+  return (
+    <Card className="p-4">
+      <SectionHeading eyebrow="Deterministic comparison + policy" title="Decision evaluation">
+        <Badge variant="decision">DECISION</Badge>
+      </SectionHeading>
+      <p className="text-xs text-slate-400 mt-2">
+        Compares this investigation&apos;s own latest completed simulation per scenario — no
+        AI/LLM is involved in either step. Evaluation picks a preferred scenario; policy then
+        decides, independently, whether FIN-SCOPE may choose it. A preferred scenario can still be
+        blocked. Phase 6 never executes an action.
+      </p>
+
+      <div className="mt-4">
+        <Button variant="secondary" onClick={onRun} disabled={running}>
+          {running ? "Evaluating…" : decisions.length > 0 ? "Re-evaluate" : "Evaluate scenarios"}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="mt-3">
+          <ErrorText>{error}</ErrorText>
+        </div>
+      )}
+
+      <div className="mt-4">
+        {!decisionsLoaded && <LoadingRow>Loading decision history…</LoadingRow>}
+        {decisionsLoaded && !latest && !running && (
+          <EmptyState>No decision has been evaluated for this investigation yet.</EmptyState>
+        )}
+        {running && (
+          <div className="mt-1">
+            <LoadingRow>Evaluating…</LoadingRow>
+          </div>
+        )}
+        {!running && latest && <DecisionResult decision={latest} />}
+      </div>
+
+      {history.length > 0 && (
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+            Decision history
+          </p>
+          <ul className="divide-y divide-slate-100">
+            {history.map((decision) => (
+              <li key={decision.id} className="py-2 flex items-center justify-between text-xs">
+                <span className="text-slate-700 font-medium">{decisionSummaryLabel(decision)}</span>
+                <span className="text-slate-400">{decision.policy_decision ?? "—"}</span>
+                <span className="text-slate-400 font-mono">
+                  {new Date(decision.created_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function DecisionResult({ decision }: { decision: Decision }) {
+  if (decision.status !== "completed" || !("preferred_scenario" in decision.evaluation_result)) {
+    return (
+      <div className="space-y-2">
+        <Badge variant="neutral">
+          {decision.status === "insufficient_evidence"
+            ? "Insufficient evidence"
+            : "No eligible scenario"}
+        </Badge>
+        <p className="text-sm text-slate-600">
+          {decision.failure_reason ?? "There is nothing to evaluate a decision over yet."}
+        </p>
+      </div>
+    );
+  }
+
+  const evaluation = decision.evaluation_result;
+  const policyCopy = decision.policy_decision ? POLICY_COPY[decision.policy_decision] : null;
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+          Candidates compared
+        </p>
+        <div className="overflow-x-auto -mx-1">
+          <table className="w-full text-sm min-w-[440px]">
+            <thead>
+              <tr className="text-left text-xs text-slate-400">
+                <th className="font-medium pb-1.5 px-1">Scenario</th>
+                <th className="font-medium pb-1.5 px-1 text-right">Failed Δ</th>
+                <th className="font-medium pb-1.5 px-1 text-right">Recovery</th>
+                <th className="font-medium pb-1.5 px-1 text-right">Exposure</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {evaluation.candidates.map((candidate) => (
+                <tr
+                  key={candidate.simulation_id}
+                  className={
+                    candidate.scenario === evaluation.preferred_scenario ? "bg-sky-50/60" : undefined
+                  }
+                >
+                  <td className="py-1.5 px-1 text-slate-900 font-medium">
+                    {SCENARIO_LABELS[candidate.scenario]}
+                    {candidate.scenario === evaluation.preferred_scenario && (
+                      <span className="ml-1.5 text-sky-600 text-xs font-normal">preferred</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 px-1 text-right tabular-nums text-slate-700">
+                    {candidate.failed_event_count_delta}
+                  </td>
+                  <td className="py-1.5 px-1 text-right tabular-nums text-slate-700">
+                    {candidate.estimated_recovery_by_currency.length > 0
+                      ? candidate.estimated_recovery_by_currency
+                          .map((item) => `${item.amount} ${item.currency}`)
+                          .join(", ")
+                      : "—"}
+                  </td>
+                  <td className="py-1.5 px-1 text-right tabular-nums text-slate-700">
+                    {candidate.projected_exposure_by_currency.length > 0
+                      ? candidate.projected_exposure_by_currency
+                          .map((item) => `${item.amount} ${item.currency}`)
+                          .join(", ")
+                      : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="border border-slate-200 rounded-lg p-3">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Badge variant="decision">DECISION</Badge>
+          <span className="text-sm font-semibold text-slate-900">
+            Preferred: {SCENARIO_LABELS[evaluation.preferred_scenario]}
+          </span>
+        </div>
+        <p className="text-xs text-slate-500 mt-1.5">{evaluation.reason}</p>
+      </div>
+
+      {policyCopy && (
+        <div className="border border-slate-200 rounded-lg p-3">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <Badge variant="neutral">POLICY</Badge>
+            <Badge variant={policyCopy.variant}>{policyCopy.label}</Badge>
+          </div>
+          {decision.policy_reasons.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {decision.policy_reasons.map((reason) => (
+                <li key={reason} className="text-xs text-slate-500">
+                  {reason}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
     </div>
   );
 }
