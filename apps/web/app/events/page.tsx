@@ -3,6 +3,18 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorText,
+  Input,
+  Label,
+  LoadingRow,
+  Select,
+  SuccessText,
+} from "@/components/ui";
+
 // Mirrors app.domain.events.KNOWN_EVENT_TYPES on the backend. Phase 2 keeps
 // this a plain hardcoded list on both sides rather than fetching a
 // type catalog endpoint that does not exist yet.
@@ -52,6 +64,8 @@ const EMPTY_FORM: FormState = {
   status: "",
   occurred_at: "",
 };
+
+const CONCERNING_TYPES = new Set(["payment_failed", "settlement_delayed", "gateway_degraded"]);
 
 export default function EventsPage() {
   const [merchants, setMerchants] = useState<Merchant[]>([]);
@@ -184,161 +198,124 @@ export default function EventsPage() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto px-6 py-12">
-      <h1 className="text-xl font-semibold">Financial events</h1>
-      <p className="text-sm text-neutral-500 mt-1">
+    <main className="max-w-3xl mx-auto px-6 py-10">
+      <h1 className="text-xl font-semibold text-slate-900">Financial events</h1>
+      <p className="text-sm text-slate-500 mt-1">
         Ingest and inspect financial events through the real API and database.
       </p>
 
-      <form
-        onSubmit={handleCreate}
-        className="mt-8 border border-neutral-200 rounded-lg p-5 space-y-3"
-      >
-        <h2 className="font-medium text-sm">Ingest event</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm text-neutral-600" htmlFor="event-merchant">
-              Merchant
-            </label>
-            <select
-              id="event-merchant"
-              required
-              value={form.merchant_id}
-              onChange={(e) => setForm({ ...form, merchant_id: e.target.value })}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            >
-              <option value="">Select a merchant…</option>
-              {merchants.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-            {merchants.length === 0 && (
-              <p className="text-xs text-neutral-400 mt-1">
-                No merchants yet —{" "}
-                <Link href="/merchants" className="underline">
-                  create one first
-                </Link>
-                .
-              </p>
-            )}
+      <Card className="mt-8 p-5">
+        <form onSubmit={handleCreate} className="space-y-4">
+          <h2 className="font-medium text-sm text-slate-900">Ingest event</h2>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="event-merchant">Merchant</Label>
+              <Select
+                id="event-merchant"
+                required
+                value={form.merchant_id}
+                onChange={(e) => setForm({ ...form, merchant_id: e.target.value })}
+              >
+                <option value="">Select a merchant…</option>
+                {merchants.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </Select>
+              {merchants.length === 0 && (
+                <p className="text-xs text-slate-400 mt-1.5">
+                  No merchants yet —{" "}
+                  <Link href="/merchants" className="text-blue-600 hover:underline">
+                    create one first
+                  </Link>
+                  .
+                </p>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="event-type">Event type</Label>
+              <Select
+                id="event-type"
+                value={form.event_type}
+                onChange={(e) => setForm({ ...form, event_type: e.target.value })}
+              >
+                {EVENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="event-source">Source</Label>
+              <Input
+                id="event-source"
+                value={form.source}
+                onChange={(e) => setForm({ ...form, source: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="event-external-reference">External reference (optional)</Label>
+              <Input
+                id="event-external-reference"
+                value={form.external_reference}
+                onChange={(e) => setForm({ ...form, external_reference: e.target.value })}
+                placeholder="Leave set to test idempotent re-send"
+              />
+            </div>
+            <div>
+              <Label htmlFor="event-amount">Amount (optional)</Label>
+              <Input
+                id="event-amount"
+                value={form.amount}
+                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="event-currency">Currency (optional)</Label>
+              <Input
+                id="event-currency"
+                value={form.currency}
+                maxLength={3}
+                onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="event-status">Status (optional)</Label>
+              <Input
+                id="event-status"
+                value={form.status}
+                onChange={(e) => setForm({ ...form, status: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="event-occurred-at">Occurred at (optional, defaults to now)</Label>
+              <Input
+                id="event-occurred-at"
+                type="datetime-local"
+                value={form.occurred_at}
+                onChange={(e) => setForm({ ...form, occurred_at: e.target.value })}
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-sm text-neutral-600" htmlFor="event-type">
-              Event type
-            </label>
-            <select
-              id="event-type"
-              value={form.event_type}
-              onChange={(e) => setForm({ ...form, event_type: e.target.value })}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            >
-              {EVENT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm text-neutral-600" htmlFor="event-source">
-              Source
-            </label>
-            <input
-              id="event-source"
-              value={form.source}
-              onChange={(e) => setForm({ ...form, source: e.target.value })}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label
-              className="block text-sm text-neutral-600"
-              htmlFor="event-external-reference"
-            >
-              External reference (optional)
-            </label>
-            <input
-              id="event-external-reference"
-              value={form.external_reference}
-              onChange={(e) => setForm({ ...form, external_reference: e.target.value })}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-              placeholder="Leave set to test idempotent re-send"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-neutral-600" htmlFor="event-amount">
-              Amount (optional)
-            </label>
-            <input
-              id="event-amount"
-              value={form.amount}
-              onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-neutral-600" htmlFor="event-currency">
-              Currency (optional)
-            </label>
-            <input
-              id="event-currency"
-              value={form.currency}
-              maxLength={3}
-              onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-neutral-600" htmlFor="event-status">
-              Status (optional)
-            </label>
-            <input
-              id="event-status"
-              value={form.status}
-              onChange={(e) => setForm({ ...form, status: e.target.value })}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            />
-          </div>
-          <div>
-            <label
-              className="block text-sm text-neutral-600"
-              htmlFor="event-occurred-at"
-            >
-              Occurred at (optional, defaults to now)
-            </label>
-            <input
-              id="event-occurred-at"
-              type="datetime-local"
-              value={form.occurred_at}
-              onChange={(e) => setForm({ ...form, occurred_at: e.target.value })}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            />
-          </div>
-        </div>
-        <button
-          type="submit"
-          disabled={submitting || !form.merchant_id}
-          className="bg-neutral-900 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50"
-        >
-          {submitting ? "Ingesting…" : "Ingest event"}
-        </button>
-        {submitError && <p className="text-sm text-red-600">{submitError}</p>}
-        {submitSuccess && <p className="text-sm text-green-700">{submitSuccess}</p>}
-      </form>
+          <Button type="submit" disabled={submitting || !form.merchant_id}>
+            {submitting ? "Ingesting…" : "Ingest event"}
+          </Button>
+          {submitError && <ErrorText>{submitError}</ErrorText>}
+          {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
+        </form>
+      </Card>
 
       <div className="mt-8">
-        <div className="flex gap-3 items-end mb-3">
+        <div className="flex gap-4 items-end mb-3">
           <div>
-            <label className="block text-xs text-neutral-500" htmlFor="filter-merchant">
-              Filter by merchant
-            </label>
-            <select
+            <Label htmlFor="filter-merchant">Filter by merchant</Label>
+            <Select
               id="filter-merchant"
               value={filterMerchant}
               onChange={(e) => handleFilterMerchantChange(e.target.value)}
-              className="mt-1 border border-neutral-300 rounded px-2 py-1 text-sm"
+              className="min-w-[12rem]"
             >
               <option value="">All merchants</option>
               {merchants.map((m) => (
@@ -346,17 +323,15 @@ export default function EventsPage() {
                   {m.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
           <div>
-            <label className="block text-xs text-neutral-500" htmlFor="filter-type">
-              Filter by type
-            </label>
-            <select
+            <Label htmlFor="filter-type">Filter by type</Label>
+            <Select
               id="filter-type"
               value={filterType}
               onChange={(e) => handleFilterTypeChange(e.target.value)}
-              className="mt-1 border border-neutral-300 rounded px-2 py-1 text-sm"
+              className="min-w-[10rem]"
             >
               <option value="">All types</option>
               {EVENT_TYPES.map((t) => (
@@ -364,34 +339,49 @@ export default function EventsPage() {
                   {t}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
-          <span className="text-xs text-neutral-400">{total} total</span>
+          <span className="text-xs text-slate-400 pb-2">{total} total</span>
         </div>
 
-        {loading && <p className="text-sm text-neutral-500">Loading…</p>}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {loading && <LoadingRow>Loading events…</LoadingRow>}
+        {error && <ErrorText>{error}</ErrorText>}
         {!loading && !error && events.length === 0 && (
-          <p className="text-sm text-neutral-500">No events match these filters.</p>
+          <EmptyState>No events match these filters.</EmptyState>
         )}
         {!loading && events.length > 0 && (
-          <ul className="divide-y divide-neutral-200 border border-neutral-200 rounded-lg">
-            {events.map((ev) => (
-              <li key={ev.id} className="px-4 py-3 text-sm flex justify-between items-center">
-                <div>
-                  <Link href={`/events/${ev.id}`} className="font-medium hover:underline">
-                    {ev.event_type}
+          <Card>
+            <ul className="divide-y divide-slate-100">
+              {events.map((ev) => (
+                <li key={ev.id}>
+                  <Link
+                    href={`/events/${ev.id}`}
+                    className="px-4 py-3.5 flex justify-between items-center gap-4 hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                          CONCERNING_TYPES.has(ev.event_type) ? "bg-amber-500" : "bg-emerald-500"
+                        }`}
+                        aria-hidden="true"
+                      />
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-slate-900 truncate">
+                          {ev.event_type}
+                        </div>
+                        <div className="text-slate-400 text-xs mt-0.5">
+                          {ev.source} · {new Date(ev.occurred_at).toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-slate-500 text-xs tabular-nums shrink-0">
+                      {ev.amount ? `${ev.amount} ${ev.currency ?? ""}` : "—"}
+                    </span>
                   </Link>
-                  <div className="text-neutral-400 text-xs">
-                    {ev.source} · {new Date(ev.occurred_at).toLocaleString()}
-                  </div>
-                </div>
-                <span className="text-neutral-500 text-xs">
-                  {ev.amount ? `${ev.amount} ${ev.currency ?? ""}` : "—"}
-                </span>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          </Card>
         )}
       </div>
     </main>

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { Card, ErrorText, KeyValueRow, LoadingRow } from "@/components/ui";
+
 type FinancialEvent = {
   id: string;
   merchant_id: string;
@@ -68,31 +70,32 @@ export default function EventDetailPage() {
     : null;
 
   return (
-    <main className="max-w-2xl mx-auto px-6 py-12">
-      <Link href="/events" className="text-sm text-neutral-500 hover:underline">
+    <main className="max-w-2xl mx-auto px-6 py-10">
+      <Link href="/events" className="text-sm text-slate-500 hover:text-slate-900 transition-colors">
         ← All events
       </Link>
-      <h1 className="text-xl font-semibold mt-3">Event detail</h1>
+      <h1 className="text-xl font-semibold text-slate-900 mt-3">Event detail</h1>
 
-      {loading && <p className="text-sm text-neutral-500 mt-4">Loading…</p>}
-      {error && <p className="text-sm text-red-600 mt-4">{error}</p>}
+      {loading && <div className="mt-4"><LoadingRow>Loading event…</LoadingRow></div>}
+      {error && <div className="mt-4"><ErrorText>{error}</ErrorText></div>}
       {event && fields && (
-        <dl className="mt-6 border border-neutral-200 rounded-lg divide-y divide-neutral-200 text-sm">
-          {Object.entries(fields).map(([label, value]) => (
-            <div key={label} className="px-4 py-2.5 flex justify-between gap-4">
-              <dt className="text-neutral-500">{label}</dt>
-              <dd className="text-right break-all">{value}</dd>
-            </div>
-          ))}
-          <div className="px-4 py-2.5">
-            <dt className="text-neutral-500 mb-1">Payload</dt>
-            <dd>
-              <pre className="bg-neutral-50 rounded p-3 text-xs overflow-x-auto">
-                {JSON.stringify(event.payload, null, 2)}
-              </pre>
-            </dd>
-          </div>
-        </dl>
+        <div className="mt-6 space-y-6">
+          <Card>
+            <dl className="divide-y divide-slate-100">
+              {Object.entries(fields).map(([label, value]) => (
+                <KeyValueRow key={label} label={label} value={value} />
+              ))}
+            </dl>
+          </Card>
+          <Card className="p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+              Payload
+            </p>
+            <pre className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs overflow-x-auto text-slate-700">
+              {JSON.stringify(event.payload, null, 2)}
+            </pre>
+          </Card>
+        </div>
       )}
     </main>
   );

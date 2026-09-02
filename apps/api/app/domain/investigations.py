@@ -129,7 +129,7 @@ def run_investigation(
     merchant_id: uuid.UUID,
     as_of: datetime | None = None,
 ) -> Investigation:
-    """Run FIND -> ROOT CAUSE -> IMPACT for a merchant and persist the result.
+    """Run FIND -> DOMINANT SIGNAL -> IMPACT for a merchant and persist the result.
 
     Always persists, including when no incident is detected -- the
     investigation itself is an auditable act. Raises MerchantNotFoundError
