@@ -27,11 +27,13 @@ This repository currently implements the foundation, the deterministic
 event-ingestion layer, a deterministic FIND -> dominant-signal -> IMPACT
 slice (rule-based incident detection, a frequency-based "dominant signal"
 heuristic, and a currency-safe impact estimate -- not causal root-causing,
-and no AI/LLM call anywhere in this slice), and, as of Phase 4, a reasoning
-layer that proposes ranked, evidence-grounded hypotheses over that
-deterministic evidence -- plausible explanations, never a confirmed ROOT
-CAUSE. All of this is described in section 12. Causal ROOT CAUSE reasoning,
-SIMULATE, DECIDE, POLICY, ACT, VERIFY, and LEARN have not started.
+and no AI/LLM call anywhere in this slice), a reasoning layer (Phase 4)
+that proposes ranked, evidence-grounded hypotheses over that deterministic
+evidence -- plausible explanations, never a confirmed ROOT CAUSE -- and, as
+of Phase 5, a deterministic (again, no AI/LLM call) SIMULATE step that
+projects a scenario's consequence against an investigation's own persisted
+evidence. All of this is described in section 12. Causal ROOT CAUSE
+reasoning, DECIDE, POLICY, ACT, VERIFY, and LEARN have not started.
 
 ## 4. Why AI is used
 
@@ -80,12 +82,12 @@ Backend (FastAPI)
         |
   +-----+-----+-----+
   |           |      |
-Event      Investi-  Simulation      (not yet implemented)
+Event      Investi-  Simulation
 Engine     gation
   |           |      |
-Anomaly/   AI-driven  Financial
-Stats      reasoning  Model
-  |           |      |
+Anomaly/   AI-driven  Deterministic
+Stats      reasoning  consequence
+  |           |      simulator
   +-----+-----+-----+
         |
   Decision Engine        (not yet implemented)
@@ -110,6 +112,14 @@ deterministic "dominant signal" frequency heuristic, and a currency-safe
 impact calculation, persisted as `investigations` -- this is rule-based
 detection, not the AI-driven root-cause reasoning shown in the
 architecture diagram above; that remains a later, unimplemented phase.
+Phase 4 adds evidence-grounded AI reasoning (hypotheses over Phase 3's
+evidence, never a replacement for it) as `investigation_reasoning`. Phase 5
+adds the Simulation box: a deterministic (non-AI) scenario simulator that
+projects the consequence of a small, explicit scenario catalog against an
+investigation's own persisted evidence, as `investigation_simulations` --
+the Decision Engine, Policy Engine, Execution Layer, and Razorpay
+integration below it remain unimplemented, and Phase 5 does not select,
+authorize, or execute any of the scenarios it simulates.
 
 ## 7. Technology stack
 
@@ -146,19 +156,13 @@ Not yet implemented.
 | Phase | Goal | Key Deliverable | Status |
 |------|------|-----------------|--------|
 | 1 | Foundation | Working project skeleton | ✅ COMPLETE |
-| 2 | Event Engine | Financial event ingestion | ✅ COMPLETE |
-| 3 | Incident Investigation | FIND + dominant-signal heuristic + impact | ✅ COMPLETE |
+| 2 | Financial Events | Financial event ingestion | ✅ COMPLETE |
+| 3 | Investigation / Impact | FIND + dominant-signal heuristic + currency-safe impact | ✅ COMPLETE |
 | 4 | Investigation Reasoning | Evidence-grounded hypotheses over Phase 3 evidence | ✅ COMPLETE |
-| 5 | Root Cause | Evidence-backed ranking | ⬜ |
-| 6 | Simulation | Controlled financial sandbox | ⬜ |
-| 7 | Decision | Intervention selection | ⬜ |
-| 8 | Policy + ACT | Bounded execution | ⬜ |
-| 9 | VERIFY | Outcome verification | ⬜ |
-| 10 | Evaluation | Benchmark + metrics | ⬜ |
-| 11 | Product UI | Investigation experience | ⬜ |
-| 12 | Integration | Provider/test-mode integration | ⬜ |
-| 13 | Hardening | Reliability + security | ⬜ |
-| 14 | Submission | Documentation + demo | ⬜ |
+| 5 | Consequence Simulation | Scenario -> deterministic simulator -> persisted consequence result | ✅ COMPLETE |
+| 6 | Decision Evaluation + Policy | Deterministic scenario/decision selection under an explicit, non-AI policy boundary | ⬜ |
+| 7 | Bounded Sandbox Action | Policy-authorized action execution, sandboxed -- AI still never directly controls money | ⬜ |
+| 8 | Outcome Verification | Verify an executed action's actual outcome against what Phase 5 projected | ⬜ |
 
 ### Phase 1 — Foundation
 
@@ -382,10 +386,133 @@ never exercises.
 
 Status: COMPLETE
 
+### Phase 5 — Deterministic Consequence Simulation
+
+Goal: given an investigation's already-persisted, immutable evidence, a
+scenario, and explicit deterministic assumptions, calculate the projected
+consequence reproducibly -- with zero AI/LLM involvement in the
+calculation itself. The vertical slice becomes:
+
+    INVESTIGATION -> REASONING -> SCENARIO -> DETERMINISTIC SIMULATOR -> CONSEQUENCE RESULT
+
+Causal root-cause ranking is not part of this phase or any implemented
+phase -- Phase 4's hypotheses remain plausible explanations, never a
+confirmed cause, and nothing in Phase 5 changes that.
+
+Delivered:
+- `investigation_simulations` table (Alembic `0005`), FK to
+  `investigations`; append-only, exactly like `investigation_reasoning` --
+  every simulation run inserts a new row, nothing is ever updated in
+  place, and history is preserved even across re-runs of the same scenario.
+- `POST /v1/investigations/{id}/simulations` (run a scenario and persist
+  the result), `GET /v1/investigations/{id}/simulations` (append-only
+  history, newest first), and `GET /v1/investigations/{id}/simulations/{simulation_id}`
+  (one result, 404 if it belongs to a different investigation), all
+  API-key protected alongside the existing Phase 3/4 investigation routes.
+- `app/domain/simulation.py`: the deterministic simulator. Pure Python --
+  no LLM call, no network dependency, no random behavior anywhere in the
+  module. The same (investigation snapshot, scenario, assumptions,
+  `SIMULATOR_VERSION`) always produces the same result, verified directly
+  (see Verification below).
+- Four scenarios, each with a deterministic, documented eligibility rule
+  read only from an investigation's own persisted evidence (never a
+  re-query of `financial_events`):
+  - `DO_NOTHING` -- no events in scope, by definition; baseline equals
+    projected with zero delta, the sanity-check case.
+  - `RETRY_AFFECTED_PAYMENTS` -- evidence events with
+    `event_type == "payment_failed"`.
+  - `REROUTE_PROVIDER` -- evidence events whose `event_type` is
+    `payment_failed`/`gateway_degraded` and whose `source` matches the most
+    frequent such source. `source` is the event's own ingestion source (see
+    section 3/Phase 2), **not** a verified payment-provider/gateway
+    identity -- FIN-SCOPE does not persist one yet. It is used here only as
+    an explicitly-labeled deterministic proxy for "which upstream channel
+    this scenario would route traffic away from", and every result's
+    `scope_description` spells out exactly which `source` value was used,
+    so the UI never presents this as an observed provider fact.
+  - `TARGET_AFFECTED_EVENT_TYPE` -- evidence events matching the
+    investigation's own `dominant_signal_event_type`; insufficient evidence
+    if there is no dominant signal. Named for what the data model actually
+    supports: FIN-SCOPE has no per-event or per-transaction segment
+    dimension (`Merchant.segment` is a single per-merchant field, not part
+    of an investigation's evidence), so this scenario is scoped by event
+    type, not by a fabricated "segment".
+
+  Every result's `scope_description` field states exactly which rule
+  selected its eligible events.
+- Closed-form math only, no Monte Carlo: for the scoped/eligible events,
+  `scoped_count = round(eligible_count * scope_fraction)`,
+  `success_count = round(scoped_count * success_rate)`, and recovered
+  amount per currency = `eligible_exposure * scope_fraction * success_rate`,
+  rounded half-up to the cent. Assumptions (`success_rate`, `scope_fraction`)
+  are explicit, persisted with every run, bounded to `(0, 1]`, and default
+  to conservative, clearly-not-production-calibrated per-scenario constants
+  in code (0.55 / 0.65 / 0.50 respectively) -- a caller may override either
+  within bounds; `DO_NOTHING` accepts no override, since it applies none.
+- Currency safety and no-fabrication carried over verbatim from Phase 3's
+  discipline: amounts are never summed across currencies, and an eligible
+  event with a missing amount is counted in
+  `exposure_amount_unknown_count` and excluded from every sum -- never
+  coerced to zero.
+- Every result makes OBSERVED FACT / SIMULATION ASSUMPTION / PROJECTED
+  RESULT explicit and separable: `input_snapshot` (frozen from the parent
+  Investigation's own already-persisted, immutable fields -- never a live
+  re-query), `assumptions` (the resolved rate/fraction actually used), and
+  `result.baseline` / `result.projected` / `result.delta` /
+  `result.estimated_recovery_by_currency` (all clearly PROJECTED, never
+  presented as an actual financial outcome).
+- Two distinguishable, always-persisted outcomes (`status`): `completed`
+  and `insufficient_evidence` (no incident was detected for a non-
+  `DO_NOTHING` scenario -- mirrors Phase 4's own `incident_detected`
+  short-circuit exactly, no second threshold invented). A simulation never
+  depends on Phase 4 reasoning: it reads nothing from
+  `InvestigationReasoning`, and a valid investigation is simulatable even
+  when no reasoning provider is configured.
+- Every simulation run writes an `audit_log` row
+  (`investigation_simulation_completed`) recording the outcome shape only
+  (investigation_id, scenario, status, simulator_version) -- never the full
+  result payload, the same restraint `investigation_reasoning_completed`
+  already applies.
+- `apps/web/investigations/[id]`: a new "Consequence simulation" section
+  below Reasoning (minimal addition, no redesign) -- a scenario selector, a
+  Run button, a scope description, an ASSUMPTION note, side-by-side
+  Baseline (FACT) / Projected (PROJECTED) cards per scenario, estimated
+  recovery, a delta line, and simulation history. Two new badge variants
+  (`projected`, `assumption`) were added to `apps/web/components/ui.tsx`
+  alongside the existing FACT/INFERENCE/UNCERTAINTY set.
+
+Verification: `scripts/verify-phase-5.sh` was written (mirroring
+`verify-phase-4.sh`'s structure) and has since been run by the project
+owner against the running application -- Phase 5 is now COMPLETE, on the
+same footing as Phases 1-4. What was actually executed in the environment
+this phase was implemented in (no Docker, no network, no working Python
+environment available there -- the same constraint documented for prior
+phases): `tsc --noEmit` and `eslint .` against the full frontend (both
+clean), `py_compile` across every new and modified backend file (clean),
+and -- specifically to give the deterministic calculation itself real
+executed evidence rather than only a hand-derived expectation -- the core
+`_simulate`/`_eligible_events` functions were imported directly (with
+`sqlalchemy`/`app.models` stubbed out, since no package is installed in
+that environment) and run against the exact fixture data each new test in
+`apps/api/tests/test_simulation.py` uses, with every expected number
+(eligible counts, baseline/projected exposure, recovered amounts, deltas,
+determinism across two runs) asserted and matching. On the project
+owner's machine, `scripts/verify-phase-5.sh` was subsequently run and
+passed in full: 86 backend tests passed, ruff clean, mypy clean, both
+Alembic directions verified, the live `.../simulations` endpoints checked
+against a running Postgres/Redis, frontend lint and production build both
+succeeded, the vendor/tool-attribution hygiene scan and the simulator's
+dedicated no-LLM/provider-import check both passed, and the manual
+browser walkthrough of the new simulation section was confirmed.
+
+Status: COMPLETE
+
 ## 13. Phase completion status
 
-Phases 1, 2, 3, and 4 are COMPLETE (implemented, verified, documented). No
-later phase has any implementation yet.
+Phases 1-5 are COMPLETE (implemented, independently verified,
+documented) -- see the Phase 5 section above for exactly what was
+executed in the implementation environment versus on the project owner's
+machine. No later phase has any implementation yet.
 
 ## 14. Verification results
 
@@ -429,6 +556,24 @@ provider error response's raw JSON body (which can carry account/billing-
 specific text) was reaching `InvestigationReasoning.failure_reason`, and
 from there the API and UI, verbatim -- see section 12 (Phase 4) for the
 fix and its regression tests.
+
+Phase 5 summary: 86/86 backend tests passed (63 from Phases 1-4 plus
+the simulation suite -- see section 17 for exactly what it covers), ruff
+clean, mypy clean, both Alembic directions verified, the live
+`.../simulations` endpoint checks all passed against a running
+Postgres/Redis, frontend ESLint and production build both succeeded,
+security/git hygiene checks passed (including the vendor/tool-attribution
+scan and the simulator's dedicated no-LLM/provider-import check), and the
+manual browser walkthrough confirmed the new Consequence simulation
+section (scenario selector, scope description, ASSUMPTION note,
+Baseline/Projected cards, and simulation history). All of the above was
+run and confirmed by the project owner; in the environment this phase was
+implemented in (no Docker, no network, no installed Python packages),
+`tsc --noEmit`, `eslint .`, `py_compile`, and a stubbed-import direct
+execution of the `_simulate`/`_eligible_events` calculation functions
+against every fixture case `test_simulation.py` covers were run directly
+instead, with all expected numbers matching. See section 12 (Phase 5) for
+detail.
 
 ## 15. Local setup
 
@@ -510,7 +655,14 @@ tests above deliberately never exercise) by mocking `httpx.post` with the
 standard library `unittest.mock` -- covering a malformed response body, a
 timeout, and, specifically, that an upstream error response's raw text
 never leaks into the exception message that becomes
-`InvestigationReasoning.failure_reason`. Frontend: `npx tsc --noEmit`,
+`InvestigationReasoning.failure_reason`. `apps/api/tests/test_simulation.py`
+tests the Phase 5 deterministic simulator: each of the four scenarios'
+eligibility rule and math, identical output for identical input run twice,
+currency separation, a missing amount never fabricated as zero, invalid
+scenario/parameter rejection, the insufficient-evidence short-circuit,
+append-only history, one investigation never able to read another's
+simulation result, and auth/404s -- no LLM/provider dependency anywhere in
+this suite, since the simulator itself has none. Frontend: `npx tsc --noEmit`,
 `npm run lint`, `npm run build`.
 
 ## 18. Known limitations
@@ -521,8 +673,9 @@ never leaks into the exception message that becomes
   heuristic, explicitly not causal root-cause reasoning. Phase 4 adds a
   reasoning layer that proposes plausible, evidence-grounded hypotheses
   over that evidence, but this is still not causal ROOT CAUSE detection --
-  see sections 4 and 12 (Phase 4). Causal ROOT CAUSE, SIMULATE, DECIDE,
-  POLICY, ACT, VERIFY, and LEARN are all future phases.
+  see sections 4 and 12 (Phase 4). Phase 5 adds a deterministic (non-AI)
+  SIMULATE step -- see section 12 (Phase 5). Causal ROOT CAUSE, DECIDE,
+  POLICY, ACT, VERIFY, and LEARN remain future phases.
 - Reasoning re-runs are append-only: each call to `POST .../reason`
   persists a new `investigation_reasoning` row rather than updating or
   deduplicating a previous one, even if the evidence has not changed.
@@ -542,22 +695,26 @@ never leaks into the exception message that becomes
   not a substitute for real multi-tenant auth if that becomes necessary.
 - The event-type vocabulary is a fixed set in code, duplicated as a constant
   on the frontend rather than served from an endpoint; fine at this scale.
-- Phases 1-4's automated verification (installs, tests, docker compose,
+- Phases 1-5's automated verification (installs, tests, docker compose,
   builds) were authored and written from an environment without
   package-registry or Docker access, and were executed by the project owner
   locally — see `docs/verification/phase-01.md` and
-  `docs/verification/phase-02.md` for Phase 1 and Phase 2; Phase 3 and
-  Phase 4's results are summarized in sections 12 and 14 above rather than
-  a separate file, since neither `docs/verification/phase-03.md` nor
-  `docs/verification/phase-04.md` was ever created. Unlike Phases 1-3,
-  Phase 4's writing environment also had no access to the platform-specific
-  Next.js/SWC binary `npm run build` needs -- but it did have a working
-  Node install, so `npx tsc --noEmit` and `npm run lint` were actually run
-  (and passed) rather than only written; see section 14 for exactly what
-  was and was not executed.
+  `docs/verification/phase-02.md` for Phase 1 and Phase 2; Phase 3, Phase 4,
+  and Phase 5's results are summarized in sections 12 and 14 above rather
+  than a separate file, since none of `docs/verification/phase-03.md`,
+  `phase-04.md`, or `phase-05.md` was ever created. Unlike Phases 1-3,
+  Phase 4 and Phase 5's writing environment also had no access to the
+  platform-specific Next.js/SWC binary `npm run build` needs -- but it did
+  have a working Node install, so `npx tsc --noEmit` and `npm run lint`
+  were actually run (and passed) rather than only written. Phase 5's
+  writing environment additionally had no installed Python packages at
+  all (unlike Phase 4's, which at least had `py_compile`-only checks
+  available in the same way); see section 12 (Phase 5) for exactly what
+  was and was not executed there, including how the deterministic
+  calculation itself was still given real executed evidence despite that.
 
 ## 19. Future architecture
 
 See the approved Phase 0 architecture review (development conversation) for
 the full target architecture, database schema, evaluation design, and
-Razorpay integration plan across all 14 phases.
+Razorpay integration plan across the project's phased roadmap (section 12).

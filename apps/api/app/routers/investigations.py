@@ -19,6 +19,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.domain import investigations as investigation_domain
 from app.domain import reasoning as reasoning_domain
+from app.domain import simulation as simulation_domain
 from app.providers.reasoning import HostedReasoningProvider, ReasoningProvider
 from app.schemas.investigation import (
     InvestigationCreate,
@@ -26,6 +27,7 @@ from app.schemas.investigation import (
     InvestigationRead,
 )
 from app.schemas.reasoning import InvestigationReasoningRead
+from app.schemas.simulation import SimulationCreate, SimulationListResponse, SimulationRead
 
 router = APIRouter(
     prefix="/v1/investigations",
@@ -151,3 +153,104 @@ def get_latest_reasoning(
             detail="No reasoning has been run for this investigation yet",
         )
     return InvestigationReasoningRead.model_validate(reasoning)
+
+
+@router.post(
+    "/{investigation_id}/simulations",
+    response_model=SimulationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_simulation(
+    investigation_id: uuid.UUID,
+    payload: SimulationCreate,
+    db: Session = Depends(get_db),
+) -> SimulationRead:
+    """Run a deterministic consequence simulation for a scenario over an
+    existing investigation's persisted evidence.
+
+    Always returns 201 with a persisted result, even when there is nothing
+    to simulate (status="insufficient_evidence") -- see
+    app.domain.simulation.run_simulation. 404 only when the investigation
+    itself does not exist. Never depends on Phase 4 reasoning being
+    available.
+    """
+    override = None
+    if payload.assumptions is not None:
+        override = {
+            key: value
+            for key, value in (
+                ("success_rate", payload.assumptions.success_rate),
+                ("scope_fraction", payload.assumptions.scope_fraction),
+            )
+            if value is not None
+        }
+    try:
+        simulation = simulation_domain.run_simulation(
+            db,
+            investigation_id=investigation_id,
+            scenario=payload.scenario,
+            assumptions_override=override,
+        )
+    except simulation_domain.InvestigationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Investigation {exc} not found"
+        ) from exc
+    except simulation_domain.UnsupportedScenarioError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported scenario: {exc}"
+        ) from exc
+    return SimulationRead.model_validate(simulation)
+
+
+@router.get("/{investigation_id}/simulations", response_model=SimulationListResponse)
+def list_simulations(
+    investigation_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> SimulationListResponse:
+    """Append-only simulation history for one investigation, newest first.
+    404 if the investigation itself does not exist.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    items, total = simulation_domain.list_simulations(
+        db, investigation_id=investigation_id, limit=limit, offset=offset
+    )
+    return SimulationListResponse(
+        items=[SimulationRead.model_validate(i) for i in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/{investigation_id}/simulations/{simulation_id}", response_model=SimulationRead
+)
+def get_simulation(
+    investigation_id: uuid.UUID,
+    simulation_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> SimulationRead:
+    """A single simulation result. 404 if the investigation does not exist,
+    or if `simulation_id` does not exist, or if it belongs to a different
+    investigation -- app.domain.simulation.get_simulation treats the last
+    case as not found, never returning another investigation's simulation.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    simulation = simulation_domain.get_simulation(
+        db, investigation_id=investigation_id, simulation_id=simulation_id
+    )
+    if simulation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Simulation not found"
+        )
+    return SimulationRead.model_validate(simulation)
