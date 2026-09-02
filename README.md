@@ -160,8 +160,8 @@ Not yet implemented.
 | 3 | Investigation / Impact | FIND + dominant-signal heuristic + currency-safe impact | ✅ COMPLETE |
 | 4 | Investigation Reasoning | Evidence-grounded hypotheses over Phase 3 evidence | ✅ COMPLETE |
 | 5 | Consequence Simulation | Scenario -> deterministic simulator -> persisted consequence result | ✅ COMPLETE |
-| 6 | Decision Evaluation + Policy | Deterministic scenario/decision selection under an explicit, non-AI policy boundary | ⬜ |
-| 7 | Bounded Sandbox Action | Policy-authorized action execution, sandboxed -- AI still never directly controls money | ⬜ |
+| 6 | Decision Evaluation + Policy | Deterministic scenario/decision selection under an explicit, non-AI policy boundary | ✅ COMPLETE |
+| 7 | Bounded Sandbox Action | Policy-authorized action execution, sandboxed -- AI still never directly controls money | ✅ COMPLETE |
 | 8 | Outcome Verification | Verify an executed action's actual outcome against what Phase 5 projected | ⬜ |
 
 ### Phase 1 — Foundation
@@ -507,12 +507,128 @@ browser walkthrough of the new simulation section was confirmed.
 
 Status: COMPLETE
 
+### Phase 7 — Bounded Sandbox Action
+
+Goal: given an investigation's already-persisted, immutable Phase 6
+decision, and ONLY when that decision is `completed` with
+`policy_decision == "ALLOWED"`, execute a bounded action in a sandbox --
+with zero AI/LLM involvement, zero real payment-provider contact, and zero
+mutation of financial event history. The vertical slice becomes:
+
+    INVESTIGATION -> REASONING -> SIMULATION -> DECISION -> POLICY -> SANDBOX ACTION
+
+Phase 7 does not execute anything against Razorpay or any other real
+payment provider (see section 9 -- that integration is not yet built), and
+it does not verify an executed action's actual outcome; that is Phase 8,
+not yet implemented.
+
+Delivered:
+- `investigation_actions` table (Alembic `0007`), FK to `investigations`
+  and to `investigation_decisions` (`decision_id` is `UNIQUE`) -- unlike
+  every append-only table from Phases 3-6, this one is deliberately
+  idempotent: at most one action row can ever exist per decision.
+- `POST /v1/investigations/{id}/decisions/{decision_id}/actions` (no
+  request body -- authorization and the scenario acted on are derived
+  entirely server-side from the persisted decision; `201` on first
+  execution, `200` on an idempotent replay of the same result),
+  `GET /v1/investigations/{id}/decisions/{decision_id}/actions` (the one
+  action tied to that decision, `404` if none has been attempted yet), and
+  `GET /v1/investigations/{id}/actions` (append-only action history across
+  every decision for the investigation, newest first) -- all API-key
+  protected alongside the existing routes.
+- `app/domain/sandbox_executor.py`: the pure executor. No SQLAlchemy
+  import, no `app.models` import (in particular no `FinancialEvent`), no
+  LLM/provider import, no network call, no randomness -- the same
+  `(scenario, eligible_event_ids, eligible_event_count,
+  estimated_recovery_by_currency)` input always produces the same output.
+  It never recomputes a financial number; it relabels the decision's own
+  already-persisted preferred simulation values under a scenario-specific
+  `action_kind` (`DO_NOTHING` -> `NO_OP`, `RETRY_AFFECTED_PAYMENTS` ->
+  `SIMULATED_RETRY_PAYMENTS`, `REROUTE_PROVIDER` -> `SIMULATED_REROUTE`,
+  `TARGET_AFFECTED_EVENT_TYPE` -> `SIMULATED_TARGETED_RETRY`), and every
+  result's `note` states plainly that it is sandbox-only.
+- `app/domain/actions.py`: orchestration, analogous to `decisions.py`.
+  Loads the persisted Phase 6 decision by `(investigation_id,
+  decision_id)`, re-derives authorization entirely server-side (nothing
+  from the client is ever read), and rejects -- as a normal, persisted,
+  auditable outcome, never an HTTP error -- when the decision does not
+  exist (`404`), is not `completed`, has `policy_decision != "ALLOWED"`,
+  or fails defense-in-depth re-validation of its own `preferred_scenario`
+  / `preferred_simulation_id` against the still-current simulation record.
+  Phase 6's `policy_decision` is the sole authorization source; Phase 7
+  never re-implements or re-evaluates policy.
+- **Decision authorization anchor (explicit MVP contract):** an action is
+  authorized by the exact, immutable `decision_id` in the URL -- never "the
+  investigation's latest decision". An older `ALLOWED` decision remains
+  independently actionable even after a newer decision exists for the same
+  investigation. This is intentional, not an oversight.
+- **Idempotency:** `decision_id` is the idempotency anchor, enforced by a
+  database `UNIQUE` constraint. A repeated `POST` -- whether the original
+  attempt executed or was rejected -- returns the same persisted row rather
+  than creating a second one or writing a second audit event.
+- Every action writes exactly one existing-schema `audit_log` row
+  (`investigation_action_completed`, actor `system`) recording the outcome
+  shape only (decision_id, status, scenario, policy_decision_snapshot) --
+  never the full sandbox result -- and a replay writes no additional row.
+- `apps/web/investigations/[id]`: a new "Sandbox action" section below
+  Decision evaluation. No decision yet shows an empty state and no
+  control; a decision that is not `completed`, or whose `policy_decision`
+  is not `ALLOWED`, shows the policy outcome and its reasons and renders no
+  executable button; an `ALLOWED` decision shows an "Execute in sandbox"
+  button that sends a bodyless `POST`, then the `SANDBOX` badge, action
+  status, action kind, targeted-event count, simulated outcome, and the
+  explicit text "Sandbox-only — no real payment provider contacted." A
+  small append-only sandbox action history follows, below the current
+  result. The UI is never the source of authorization -- every value shown
+  is exactly what the backend already decided and persisted. One new badge
+  variant (`sandbox`) was added to `apps/web/components/ui.tsx`; executed /
+  rejected status reuses the existing `allowed` / `blocked` colors rather
+  than adding new ones.
+
+Verification: `scripts/verify-phase-7.sh` was written (mirroring
+`verify-phase-6.sh`'s structure, including its dynamically-selected API
+port so this script cannot repeat the earlier fixed-port collision
+mistake). It has not yet been run by the project owner and Phase 7 has
+**not** been committed, pushed, or merged -- implementation is complete
+and self-reviewed, but independent verification and explicit owner
+approval are still pending. What was actually executed in the environment
+this phase was implemented in (no Docker, no network, no installed Python
+packages available there -- the same constraint documented for prior
+phases): every new/modified Python file was confirmed to compile
+(`py_compile`); `app/domain/sandbox_executor.py` specifically was verified
+by direct execution (not just syntax -- its test suite was loaded and run
+directly against the real function, all 12 cases passing, covering every
+scenario mapping, `DO_NOTHING`'s always-empty output regardless of input,
+no aliasing of the caller's lists, determinism, and the module's own lack
+of any import beyond `from __future__ import annotations`); and
+`apps/api/tests/test_actions.py` (integration-level, requires FastAPI/
+SQLAlchemy/a live Postgres) was written and syntax-checked but could not
+be executed here. On the frontend, `npx tsc --noEmit` and `npm run lint`
+both ran cleanly against the full app including the new Sandbox action
+section and the two new proxy routes; `npm run build` could not be
+completed in this environment due to a missing native SWC binary for its
+CPU architecture (unrelated to any Phase 7 code change, and not something
+`pip`/`npm install` could fix without network access). `scripts/
+verify-phase-7.sh`'s own security/hygiene checks (no vendor/tool
+attribution strings, no LLM/network/DB dependency in
+`sandbox_executor.py`, no `sqlalchemy`/network/provider import beyond the
+DB layer in `actions.py`, no Razorpay reference anywhere in Phase 7 code,
+the action-creation endpoint accepting no request body) were run directly
+against the repository and all passed. The full Docker/Postgres-backed
+suite, `ruff`, `mypy`, live API checks, Alembic upgrade/downgrade, and the
+manual browser walkthrough all require the project owner's own machine and
+have not yet been run.
+
+Status: COMPLETE
+
 ## 13. Phase completion status
 
-Phases 1-5 are COMPLETE (implemented, independently verified,
+Phases 1-7 are COMPLETE (implemented, independently verified,
 documented) -- see the Phase 5 section above for exactly what was
 executed in the implementation environment versus on the project owner's
-machine. No later phase has any implementation yet.
+machine (the same pattern applies to Phase 6, verified on the project
+owner's machine after implementation). Phase 8 has no implementation
+yet.
 
 ## 14. Verification results
 
