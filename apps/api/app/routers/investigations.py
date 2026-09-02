@@ -17,10 +17,12 @@ from sqlalchemy.orm import Session
 from app.auth import require_api_key
 from app.config import get_settings
 from app.db import get_db
+from app.domain import decisions as decision_domain
 from app.domain import investigations as investigation_domain
 from app.domain import reasoning as reasoning_domain
 from app.domain import simulation as simulation_domain
 from app.providers.reasoning import HostedReasoningProvider, ReasoningProvider
+from app.schemas.decision import DecisionListResponse, DecisionRead
 from app.schemas.investigation import (
     InvestigationCreate,
     InvestigationListResponse,
@@ -254,3 +256,83 @@ def get_simulation(
             status_code=status.HTTP_404_NOT_FOUND, detail="Simulation not found"
         )
     return SimulationRead.model_validate(simulation)
+
+
+@router.post(
+    "/{investigation_id}/decisions",
+    response_model=DecisionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_decision(
+    investigation_id: uuid.UUID, db: Session = Depends(get_db)
+) -> DecisionRead:
+    """Run Phase 6 EVALUATION -> POLICY over this investigation's own
+    persisted simulations and persist the result.
+
+    Takes no request body -- candidate simulations are always the latest
+    status="completed" simulation per scenario, auto-discovered server-side
+    (see app.domain.decisions). There is no field anywhere in this request
+    a client could use to submit an evaluation result or a policy decision;
+    both are always computed entirely server-side.
+
+    Always returns 201 with a persisted result, even when there is nothing
+    to decide (status="insufficient_evidence" or "no_eligible_scenario").
+    404 only when the investigation itself does not exist.
+    """
+    try:
+        decision = decision_domain.run_decision(db, investigation_id=investigation_id)
+    except decision_domain.InvestigationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Investigation {exc} not found"
+        ) from exc
+    return DecisionRead.model_validate(decision)
+
+
+@router.get("/{investigation_id}/decisions", response_model=DecisionListResponse)
+def list_decisions(
+    investigation_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> DecisionListResponse:
+    """Append-only decision history for one investigation, newest first.
+    404 if the investigation itself does not exist.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    items, total = decision_domain.list_decisions(
+        db, investigation_id=investigation_id, limit=limit, offset=offset
+    )
+    return DecisionListResponse(
+        items=[DecisionRead.model_validate(i) for i in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/{investigation_id}/decisions/{decision_id}", response_model=DecisionRead)
+def get_decision(
+    investigation_id: uuid.UUID,
+    decision_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> DecisionRead:
+    """A single decision result. 404 if the investigation does not exist,
+    or if `decision_id` does not exist, or if it belongs to a different
+    investigation -- app.domain.decisions.get_decision treats the last
+    case as not found, never returning another investigation's decision.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    decision = decision_domain.get_decision(
+        db, investigation_id=investigation_id, decision_id=decision_id
+    )
+    if decision is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Decision not found")
+    return DecisionRead.model_validate(decision)
