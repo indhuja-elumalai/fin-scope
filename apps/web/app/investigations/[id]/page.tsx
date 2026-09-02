@@ -160,6 +160,43 @@ type Decision = {
   created_at: string;
 };
 
+// Phase 7 (bounded sandbox action). An Action is authorized by exactly one
+// persisted Phase 6 decision (decision_id) -- never "the investigation's
+// latest decision" -- and is idempotent per decision_id, unlike the
+// append-only Reasoning/Simulation/Decision history above. See
+// app.domain.actions and app.models.investigation_action for the contract
+// this mirrors.
+type ActionStatus = "executed" | "rejected";
+
+type ActionCurrencyAmount = {
+  currency: string;
+  amount: string;
+};
+
+type SandboxResultDetail = {
+  action_kind: string;
+  targeted_event_ids: string[];
+  targeted_event_count: number;
+  simulated_outcome_by_currency: ActionCurrencyAmount[];
+  note: string;
+};
+
+type Action = {
+  id: string;
+  investigation_id: string;
+  decision_id: string;
+  status: ActionStatus;
+  rejection_reason: string | null;
+  scenario: SimulationScenario | null;
+  simulation_id: string | null;
+  policy_decision_snapshot: PolicyDecisionValue | null;
+  executor_version: string;
+  // {} only in the unlikely case a legacy row predates a field -- in
+  // practice every persisted action has a fully-populated sandbox_result.
+  sandbox_result: SandboxResultDetail | Record<string, never>;
+  created_at: string;
+};
+
 const STATUS_COPY: Record<ReasoningStatus, { label: string; tone: "success" | "neutral" | "danger" }> = {
   completed: { label: "Reasoning complete", tone: "success" },
   insufficient_evidence: { label: "Insufficient evidence", tone: "neutral" },
@@ -200,6 +237,14 @@ function decisionSummaryLabel(decision: Decision): string {
   return "—";
 }
 
+// Phase 7: executed/rejected reuse the existing allowed/blocked colors --
+// see the "sandbox" badge variant note in components/ui.tsx for why no new
+// status colors were added.
+const ACTION_STATUS_COPY: Record<ActionStatus, { label: string; variant: "allowed" | "blocked" }> = {
+  executed: { label: "Executed", variant: "allowed" },
+  rejected: { label: "Rejected", variant: "blocked" },
+};
+
 export default function InvestigationDetailPage() {
   const params = useParams<{ id: string }>();
   const [investigation, setInvestigation] = useState<Investigation | null>(null);
@@ -221,6 +266,19 @@ export default function InvestigationDetailPage() {
   const [decisionsLoaded, setDecisionsLoaded] = useState(false);
   const [decisionRunning, setDecisionRunning] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
+
+  // actionsHistory is the append-only history across ALL decisions for this
+  // investigation (list_actions). actionForDecision is the single,
+  // idempotent action tied to the CURRENT latest decision specifically
+  // (get_action_for_decision) -- these are deliberately separate: an older
+  // decision can still have its own action even after a newer decision
+  // exists (see the MVP decision_id-anchor contract in app.domain.actions).
+  const [actionsHistory, setActionsHistory] = useState<Action[]>([]);
+  const [actionsLoaded, setActionsLoaded] = useState(false);
+  const [actionForDecision, setActionForDecision] = useState<Action | null>(null);
+  const [actionForDecisionLoaded, setActionForDecisionLoaded] = useState(false);
+  const [actionRunning, setActionRunning] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,6 +402,82 @@ export default function InvestigationDetailPage() {
     };
   }, [params.id]);
 
+  // Loads the append-only sandbox action history for this investigation,
+  // independent of everything above -- an action reads whatever decision it
+  // is tied to at execution time (see app.domain.actions.run_action).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadActionsHistory() {
+      try {
+        const response = await fetch(`/api/investigations/${params.id}/actions?limit=20`);
+        if (!response.ok) {
+          throw new Error(`Failed to load sandbox actions (${response.status})`);
+        }
+        const body = (await response.json()) as { items: Action[] };
+        if (!cancelled) setActionsHistory(body.items);
+      } catch (err) {
+        if (!cancelled) {
+          setActionError(err instanceof Error ? err.message : "Failed to load sandbox actions.");
+        }
+      } finally {
+        if (!cancelled) setActionsLoaded(true);
+      }
+    }
+
+    loadActionsHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id]);
+
+  // Loads the single idempotent action tied to the CURRENT latest decision
+  // specifically (not "the latest action overall") -- re-fetches whenever a
+  // new decision is evaluated. A 404 here just means "no sandbox action has
+  // been attempted for this decision yet", a normal, expected state.
+  const latestDecisionId = decisions[0]?.id ?? null;
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadActionForDecision() {
+      if (!latestDecisionId) {
+        if (!cancelled) {
+          setActionForDecision(null);
+          setActionForDecisionLoaded(true);
+        }
+        return;
+      }
+
+      if (!cancelled) setActionForDecisionLoaded(false);
+
+      try {
+        const response = await fetch(
+          `/api/investigations/${params.id}/decisions/${latestDecisionId}/actions`
+        );
+        if (response.status === 404) {
+          if (!cancelled) setActionForDecision(null);
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load sandbox action (${response.status})`);
+        }
+        const body = (await response.json()) as Action;
+        if (!cancelled) setActionForDecision(body);
+      } catch (err) {
+        if (!cancelled) {
+          setActionError(err instanceof Error ? err.message : "Failed to load sandbox action.");
+        }
+      } finally {
+        if (!cancelled) setActionForDecisionLoaded(true);
+      }
+    }
+
+    loadActionForDecision();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, latestDecisionId]);
+
   const runSimulation = useCallback(async () => {
     setSimulationRunning(true);
     setSimulationError(null);
@@ -409,6 +543,38 @@ export default function InvestigationDetailPage() {
       setDecisionRunning(false);
     }
   }, [params.id]);
+
+  // Bodyless POST -- the server derives everything from investigation_id
+  // and decision_id in the URL; the client supplies no authorization,
+  // scenario, or outcome data (see app.domain.actions.run_action). Requires
+  // a completed, ALLOWED latest decision; the button that calls this is
+  // only rendered in that state (see SandboxActionSection), but the UI is
+  // never the source of authorization -- the backend re-derives and
+  // re-verifies everything regardless of what triggered the request.
+  const runAction = useCallback(async () => {
+    if (!latestDecisionId) return;
+    setActionRunning(true);
+    setActionError(null);
+    try {
+      const response = await fetch(
+        `/api/investigations/${params.id}/decisions/${latestDecisionId}/actions`,
+        { method: "POST" }
+      );
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof body.detail === "string" ? body.detail : "Failed to execute sandbox action."
+        );
+      }
+      const action = body as Action;
+      setActionForDecision(action);
+      setActionsHistory((prev) => (prev.some((a) => a.id === action.id) ? prev : [action, ...prev]));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to execute sandbox action.");
+    } finally {
+      setActionRunning(false);
+    }
+  }, [params.id, latestDecisionId]);
 
   return (
     <main className="max-w-3xl mx-auto px-6 py-10">
@@ -583,6 +749,20 @@ export default function InvestigationDetailPage() {
             running={decisionRunning}
             error={decisionError}
             onRun={runDecision}
+          />
+
+          {/* 10. Bounded sandbox action -- authorized ONLY by the latest
+              persisted, completed, ALLOWED decision. Never a source of
+              authorization itself; see runAction above. */}
+          <SandboxActionSection
+            latestDecision={decisions[0] ?? null}
+            actionForDecision={actionForDecision}
+            actionForDecisionLoaded={actionForDecisionLoaded}
+            actionsHistory={actionsHistory}
+            actionsLoaded={actionsLoaded}
+            running={actionRunning}
+            error={actionError}
+            onRun={runAction}
           />
         </div>
       )}
@@ -1101,6 +1281,200 @@ function DecisionResult({ decision }: { decision: Decision }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function SandboxActionSection({
+  latestDecision,
+  actionForDecision,
+  actionForDecisionLoaded,
+  actionsHistory,
+  actionsLoaded,
+  running,
+  error,
+  onRun,
+}: {
+  latestDecision: Decision | null;
+  actionForDecision: Action | null;
+  actionForDecisionLoaded: boolean;
+  actionsHistory: Action[];
+  actionsLoaded: boolean;
+  running: boolean;
+  error: string | null;
+  onRun: () => void;
+}) {
+  // actionsHistory already includes actionForDecision (list_actions is a
+  // superset of get_action_for_decision) -- avoid rendering it twice.
+  const history = actionForDecision
+    ? actionsHistory.filter((a) => a.id !== actionForDecision.id)
+    : actionsHistory;
+
+  const decisionIsExecutable =
+    !!latestDecision &&
+    latestDecision.status === "completed" &&
+    latestDecision.policy_decision === "ALLOWED";
+
+  return (
+    <Card className="p-4">
+      <SectionHeading eyebrow="Policy-authorized, sandbox-only" title="Sandbox action">
+        <Badge variant="sandbox">SANDBOX</Badge>
+      </SectionHeading>
+      <p className="text-xs text-slate-400 mt-2">
+        Only an ALLOWED, persisted Phase 6 decision may trigger a sandbox action. The executor is
+        pure and deterministic -- it never contacts a real payment provider and never mutates
+        financial event data. It relabels the decision&apos;s own preferred simulation under a
+        scenario-specific action kind. Phase 8 outcome verification is not yet implemented.
+      </p>
+
+      <div className="mt-4">
+        {!latestDecision && (
+          <EmptyState>
+            No decision has been evaluated for this investigation yet — run decision evaluation
+            above before a sandbox action can be authorized.
+          </EmptyState>
+        )}
+
+        {latestDecision && latestDecision.status !== "completed" && (
+          <EmptyState>
+            The latest decision has no eligible scenario to act on ({decisionSummaryLabel(latestDecision)}).
+          </EmptyState>
+        )}
+
+        {latestDecision &&
+          latestDecision.status === "completed" &&
+          latestDecision.policy_decision !== "ALLOWED" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge variant="neutral">POLICY</Badge>
+                {latestDecision.policy_decision && (
+                  <Badge variant={POLICY_COPY[latestDecision.policy_decision].variant}>
+                    {POLICY_COPY[latestDecision.policy_decision].label}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-slate-600">
+                The preferred scenario ({decisionSummaryLabel(latestDecision)}) is not authorized
+                for a sandbox action.
+              </p>
+              {latestDecision.policy_reasons.length > 0 && (
+                <ul className="space-y-1">
+                  {latestDecision.policy_reasons.map((reason) => (
+                    <li key={reason} className="text-xs text-slate-500">
+                      {reason}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+        {decisionIsExecutable && (
+          <Button variant="secondary" onClick={onRun} disabled={running}>
+            {running ? "Executing…" : actionForDecision ? "Re-run sandbox action" : "Execute in sandbox"}
+          </Button>
+        )}
+      </div>
+
+      {error && (
+        <div className="mt-3">
+          <ErrorText>{error}</ErrorText>
+        </div>
+      )}
+
+      {decisionIsExecutable && (
+        <div className="mt-4">
+          {!actionForDecisionLoaded && <LoadingRow>Loading sandbox action…</LoadingRow>}
+          {running && (
+            <div className="mt-1">
+              <LoadingRow>Executing…</LoadingRow>
+            </div>
+          )}
+          {!running && actionForDecisionLoaded && actionForDecision && (
+            <ActionResult action={actionForDecision} />
+          )}
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+            Sandbox action history
+          </p>
+          {!actionsLoaded && <LoadingRow>Loading sandbox action history…</LoadingRow>}
+          <ul className="divide-y divide-slate-100">
+            {history.map((action) => (
+              <li key={action.id} className="py-2 flex items-center justify-between text-xs gap-2">
+                <span className="text-slate-700 font-medium">
+                  {action.scenario ? SCENARIO_LABELS[action.scenario] : "—"}
+                </span>
+                <Badge variant={ACTION_STATUS_COPY[action.status].variant}>
+                  {ACTION_STATUS_COPY[action.status].label}
+                </Badge>
+                <span className="text-slate-400 font-mono">
+                  {new Date(action.created_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ActionResult({ action }: { action: Action }) {
+  const statusCopy = ACTION_STATUS_COPY[action.status];
+
+  if (action.status === "rejected") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Badge variant="sandbox">SANDBOX</Badge>
+          <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+        </div>
+        <p className="text-sm text-slate-600">
+          {action.rejection_reason ?? "The sandbox action was rejected."}
+        </p>
+      </div>
+    );
+  }
+
+  const result = "action_kind" in action.sandbox_result ? action.sandbox_result : null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <Badge variant="sandbox">SANDBOX</Badge>
+        <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+        {result && <span className="text-sm font-semibold text-slate-900">{result.action_kind}</span>}
+      </div>
+
+      {result && (
+        <div className="border border-slate-200 rounded-lg p-3 space-y-2">
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Targeted events</span>
+            <span className="text-slate-900 font-medium tabular-nums">
+              {result.targeted_event_count}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Simulated outcome</span>
+            <span className="text-slate-900 tabular-nums text-right">
+              {result.simulated_outcome_by_currency.length > 0
+                ? result.simulated_outcome_by_currency
+                    .map((item) => `${item.amount} ${item.currency}`)
+                    .join(", ")
+                : "—"}
+            </span>
+          </div>
+          <p className="text-xs text-slate-500">{result.note}</p>
+        </div>
+      )}
+
+      <p className="text-xs font-medium text-teal-700">
+        Sandbox-only — no real payment provider contacted.
+      </p>
     </div>
   );
 }

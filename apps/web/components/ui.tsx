@@ -82,6 +82,11 @@ const BADGE_VARIANTS = {
   allowed: "bg-emerald-50 text-emerald-700 border-emerald-200",
   requires_approval: "bg-amber-50 text-amber-800 border-amber-200",
   blocked: "bg-red-50 text-red-700 border-red-200",
+  // Phase 7 (bounded sandbox action): every sandbox action result must be
+  // visually distinguishable from a real financial action. This is the
+  // ONLY new variant Phase 7 adds -- executed/rejected status reuses the
+  // existing allowed/blocked colors above. See app.domain.sandbox_executor.
+  sandbox: "bg-teal-50 text-teal-700 border-teal-200",
 } as const;
 
 export function Badge({

@@ -11,17 +11,19 @@ structural, not just a runtime check.
 """
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth import require_api_key
 from app.config import get_settings
 from app.db import get_db
+from app.domain import actions as action_domain
 from app.domain import decisions as decision_domain
 from app.domain import investigations as investigation_domain
 from app.domain import reasoning as reasoning_domain
 from app.domain import simulation as simulation_domain
 from app.providers.reasoning import HostedReasoningProvider, ReasoningProvider
+from app.schemas.action import ActionListResponse, ActionRead
 from app.schemas.decision import DecisionListResponse, DecisionRead
 from app.schemas.investigation import (
     InvestigationCreate,
@@ -336,3 +338,108 @@ def get_decision(
     if decision is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Decision not found")
     return DecisionRead.model_validate(decision)
+
+
+@router.post(
+    "/{investigation_id}/decisions/{decision_id}/actions",
+    response_model=ActionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_action(
+    investigation_id: uuid.UUID,
+    decision_id: uuid.UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> ActionRead:
+    """Authorize (or reject) and, if authorized, execute a bounded Phase 7
+    sandbox action for a single persisted Phase 6 decision.
+
+    Takes no request body -- the decision named by `decision_id` is the
+    entire authorization context. There is no field anywhere in this
+    request a client could use to submit a policy decision, a scenario, a
+    simulation, or an authorization/approval; all of it is re-derived
+    entirely server-side from the persisted decision (see
+    app.domain.actions).
+
+    `decision_id` is the idempotency anchor: at most one action row exists
+    per decision. 201 the first time a decision is acted on -- whether the
+    outcome is "executed" or "rejected"; a rejection is itself a
+    persisted, auditable outcome, never an HTTP error. 200 on every
+    subsequent call against the same decision_id. 404 only when the
+    investigation or the decision itself does not exist, or the decision
+    belongs to a different investigation.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    try:
+        action, created = action_domain.run_action(
+            db, investigation_id=investigation_id, decision_id=decision_id
+        )
+    except action_domain.DecisionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Decision {exc} not found"
+        ) from exc
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return ActionRead.model_validate(action)
+
+
+@router.get("/{investigation_id}/decisions/{decision_id}/actions", response_model=ActionRead)
+def get_action_for_decision(
+    investigation_id: uuid.UUID,
+    decision_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> ActionRead:
+    """The sandbox action attempted for a single decision, if any. 404 if
+    the investigation or decision does not exist (or the decision belongs
+    to a different investigation), or if no action has been attempted for
+    this decision yet.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    decision = decision_domain.get_decision(
+        db, investigation_id=investigation_id, decision_id=decision_id
+    )
+    if decision is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Decision not found")
+    action = action_domain.get_action_for_decision(
+        db, investigation_id=investigation_id, decision_id=decision_id
+    )
+    if action is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No sandbox action has been attempted for this decision yet",
+        )
+    return ActionRead.model_validate(action)
+
+
+@router.get("/{investigation_id}/actions", response_model=ActionListResponse)
+def list_actions(
+    investigation_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> ActionListResponse:
+    """Append-only sandbox action history for one investigation, across
+    every decision it has ever acted on, newest first. 404 if the
+    investigation itself does not exist.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    items, total = action_domain.list_actions(
+        db, investigation_id=investigation_id, limit=limit, offset=offset
+    )
+    return ActionListResponse(
+        items=[ActionRead.model_validate(a) for a in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
