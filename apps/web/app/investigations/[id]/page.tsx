@@ -12,6 +12,7 @@ import {
   ErrorText,
   LoadingRow,
   SectionHeading,
+  Select,
 } from "@/components/ui";
 
 type EvidenceItem = {
@@ -75,6 +76,52 @@ type Reasoning = {
   created_at: string;
 };
 
+type SimulationScenario =
+  | "DO_NOTHING"
+  | "RETRY_AFFECTED_PAYMENTS"
+  | "REROUTE_PROVIDER"
+  | "TARGET_AFFECTED_EVENT_TYPE";
+
+type SimulationStatus = "completed" | "insufficient_evidence";
+
+type SimulationCurrencyAmount = {
+  currency: string;
+  amount: string;
+};
+
+type SimulationScopeSnapshot = {
+  failed_event_count: number;
+  success_event_count: number;
+  exposure_by_currency: SimulationCurrencyAmount[];
+  exposure_amount_unknown_count: number;
+};
+
+type SimulationResultDetail = {
+  scope_description: string;
+  eligible_event_count: number;
+  eligible_event_ids: string[];
+  baseline: SimulationScopeSnapshot;
+  projected: SimulationScopeSnapshot;
+  estimated_recovery_by_currency: SimulationCurrencyAmount[];
+  delta: {
+    failed_event_count_delta: number;
+    financial_delta_by_currency: SimulationCurrencyAmount[];
+  };
+};
+
+type Simulation = {
+  id: string;
+  investigation_id: string;
+  scenario: SimulationScenario;
+  status: SimulationStatus;
+  simulator_version: string;
+  assumptions: { success_rate: string | null; scope_fraction: string | null };
+  // {} when status !== "completed" -- see app.schemas.simulation.SimulationRead.
+  result: SimulationResultDetail | Record<string, never>;
+  failure_reason: string | null;
+  created_at: string;
+};
+
 const STATUS_COPY: Record<ReasoningStatus, { label: string; tone: "success" | "neutral" | "danger" }> = {
   completed: { label: "Reasoning complete", tone: "success" },
   insufficient_evidence: { label: "Insufficient evidence", tone: "neutral" },
@@ -82,6 +129,20 @@ const STATUS_COPY: Record<ReasoningStatus, { label: string; tone: "success" | "n
   invalid_output: { label: "Reasoning output rejected", tone: "danger" },
   no_valid_hypotheses: { label: "No hypotheses proposed", tone: "neutral" },
 };
+
+const SCENARIO_LABELS: Record<SimulationScenario, string> = {
+  DO_NOTHING: "Do nothing",
+  RETRY_AFFECTED_PAYMENTS: "Retry affected payments",
+  REROUTE_PROVIDER: "Reroute provider",
+  TARGET_AFFECTED_EVENT_TYPE: "Target affected event type",
+};
+
+const SCENARIO_ORDER: SimulationScenario[] = [
+  "DO_NOTHING",
+  "RETRY_AFFECTED_PAYMENTS",
+  "REROUTE_PROVIDER",
+  "TARGET_AFFECTED_EVENT_TYPE",
+];
 
 export default function InvestigationDetailPage() {
   const params = useParams<{ id: string }>();
@@ -93,6 +154,12 @@ export default function InvestigationDetailPage() {
   const [reasoningLoaded, setReasoningLoaded] = useState(false);
   const [reasoningRunning, setReasoningRunning] = useState(false);
   const [reasoningError, setReasoningError] = useState<string | null>(null);
+
+  const [simulations, setSimulations] = useState<Simulation[]>([]);
+  const [simulationsLoaded, setSimulationsLoaded] = useState(false);
+  const [selectedScenario, setSelectedScenario] = useState<SimulationScenario>("DO_NOTHING");
+  const [simulationRunning, setSimulationRunning] = useState(false);
+  const [simulationError, setSimulationError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -157,6 +224,59 @@ export default function InvestigationDetailPage() {
       cancelled = true;
     };
   }, [params.id]);
+
+  // Loads existing simulation history, independent of investigation/reasoning --
+  // a simulation never depends on reasoning having run (see
+  // app.domain.simulation.run_simulation).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSimulations() {
+      try {
+        const response = await fetch(`/api/investigations/${params.id}/simulations?limit=20`);
+        if (!response.ok) {
+          throw new Error(`Failed to load simulations (${response.status})`);
+        }
+        const body = (await response.json()) as { items: Simulation[] };
+        if (!cancelled) setSimulations(body.items);
+      } catch (err) {
+        if (!cancelled) {
+          setSimulationError(err instanceof Error ? err.message : "Failed to load simulations.");
+        }
+      } finally {
+        if (!cancelled) setSimulationsLoaded(true);
+      }
+    }
+
+    loadSimulations();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id]);
+
+  const runSimulation = useCallback(async () => {
+    setSimulationRunning(true);
+    setSimulationError(null);
+    try {
+      const response = await fetch(`/api/investigations/${params.id}/simulations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenario: selectedScenario }),
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof body.detail === "string" ? body.detail : "Failed to run simulation."
+        );
+      }
+      const simulation = body as Simulation;
+      setSimulations((prev) => [simulation, ...prev]);
+    } catch (err) {
+      setSimulationError(err instanceof Error ? err.message : "Failed to run simulation.");
+    } finally {
+      setSimulationRunning(false);
+    }
+  }, [params.id, selectedScenario]);
 
   const runReasoning = useCallback(async () => {
     setReasoningRunning(true);
@@ -333,6 +453,17 @@ export default function InvestigationDetailPage() {
             error={reasoningError}
             onRun={runReasoning}
           />
+
+          {/* 8. Deterministic consequence simulation */}
+          <SimulationSection
+            simulations={simulations}
+            simulationsLoaded={simulationsLoaded}
+            running={simulationRunning}
+            error={simulationError}
+            selectedScenario={selectedScenario}
+            onSelectScenario={setSelectedScenario}
+            onRun={runSimulation}
+          />
         </div>
       )}
     </main>
@@ -465,6 +596,212 @@ function EvidenceRefList({ label, ids }: { label: string; ids: string[] }) {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+function SimulationSection({
+  simulations,
+  simulationsLoaded,
+  running,
+  error,
+  selectedScenario,
+  onSelectScenario,
+  onRun,
+}: {
+  simulations: Simulation[];
+  simulationsLoaded: boolean;
+  running: boolean;
+  error: string | null;
+  selectedScenario: SimulationScenario;
+  onSelectScenario: (scenario: SimulationScenario) => void;
+  onRun: () => void;
+}) {
+  const latest = simulations[0] ?? null;
+  const history = simulations.slice(1);
+
+  return (
+    <Card className="p-4">
+      <SectionHeading eyebrow="Scenario simulation" title="Consequence simulation">
+        <Badge variant="projected">PROJECTED</Badge>
+      </SectionHeading>
+      <p className="text-xs text-slate-400 mt-2">
+        Deterministic software calculates every number below from this investigation&apos;s own
+        evidence — no AI/LLM is involved in the calculation. A projected result is a simulated
+        consequence, never an actual financial outcome, and currencies are never mixed together.
+      </p>
+
+      <div className="mt-4 flex flex-wrap items-end gap-3">
+        <div className="w-64">
+          <Select
+            aria-label="Scenario"
+            value={selectedScenario}
+            onChange={(e) => onSelectScenario(e.target.value as SimulationScenario)}
+            disabled={running}
+          >
+            {SCENARIO_ORDER.map((scenario) => (
+              <option key={scenario} value={scenario}>
+                {SCENARIO_LABELS[scenario]}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <Button variant="secondary" onClick={onRun} disabled={running}>
+          {running ? "Running simulation…" : "Run simulation"}
+        </Button>
+      </div>
+
+      {error && <div className="mt-3"><ErrorText>{error}</ErrorText></div>}
+
+      <div className="mt-4">
+        {!simulationsLoaded && <LoadingRow>Loading simulation history…</LoadingRow>}
+        {simulationsLoaded && !latest && !running && (
+          <EmptyState>No simulation has been run for this investigation yet.</EmptyState>
+        )}
+        {running && <div className="mt-1"><LoadingRow>Running simulation…</LoadingRow></div>}
+        {!running && latest && <SimulationResult simulation={latest} />}
+      </div>
+
+      {history.length > 0 && (
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+            Simulation history
+          </p>
+          <ul className="divide-y divide-slate-100">
+            {history.map((simulation) => (
+              <li key={simulation.id} className="py-2 flex items-center justify-between text-xs">
+                <span className="text-slate-700 font-medium">
+                  {SCENARIO_LABELS[simulation.scenario]}
+                </span>
+                <span className="text-slate-400">
+                  {simulation.status === "completed"
+                    ? `${simulation.result && "delta" in simulation.result ? simulation.result.delta.failed_event_count_delta : 0} failed-event delta`
+                    : "insufficient evidence"}
+                </span>
+                <span className="text-slate-400 font-mono">
+                  {new Date(simulation.created_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SimulationResult({ simulation }: { simulation: Simulation }) {
+  if (simulation.status !== "completed" || !("delta" in simulation.result)) {
+    return (
+      <div className="space-y-2">
+        <Badge variant="neutral">Insufficient evidence</Badge>
+        <p className="text-sm text-slate-600">
+          {simulation.failure_reason ??
+            "No incident was detected for this investigation, so there is nothing to simulate a consequence over yet."}
+        </p>
+      </div>
+    );
+  }
+
+  const result = simulation.result;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <span className="text-sm font-semibold text-slate-900">
+          {SCENARIO_LABELS[simulation.scenario]}
+        </span>
+        <span className="text-xs text-slate-400 font-mono">
+          simulator v{simulation.simulator_version}
+        </span>
+      </div>
+      <p className="text-xs text-slate-500">{result.scope_description}</p>
+
+      <div className="flex items-center gap-1.5">
+        <Badge variant="assumption">ASSUMPTION</Badge>
+        <p className="text-xs text-slate-500">
+          {simulation.assumptions.success_rate !== null
+            ? `success rate ${simulation.assumptions.success_rate}, scope ${simulation.assumptions.scope_fraction} of ${result.eligible_event_count} eligible event${result.eligible_event_count === 1 ? "" : "s"}`
+            : "no intervention applied"}
+        </p>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-3">
+        <SimulationScopeCard label="Baseline" tone="fact" scope={result.baseline} />
+        <SimulationScopeCard label="Projected" tone="projected" scope={result.projected} />
+      </div>
+
+      {result.estimated_recovery_by_currency.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-slate-400 mb-1">Estimated recovery</p>
+          <ul className="space-y-1">
+            {result.estimated_recovery_by_currency.map((item) => (
+              <li key={item.currency} className="text-sm text-emerald-700 font-medium tabular-nums">
+                {item.amount} {item.currency}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div>
+        <p className="text-xs font-medium text-slate-400 mb-1">
+          Delta (projected − baseline)
+        </p>
+        <p className="text-sm text-slate-700">
+          {result.delta.failed_event_count_delta} failed events
+          {result.delta.financial_delta_by_currency.length > 0 && (
+            <>
+              {" · "}
+              {result.delta.financial_delta_by_currency
+                .map((item) => `${item.amount} ${item.currency}`)
+                .join(", ")}
+            </>
+          )}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SimulationScopeCard({
+  label,
+  tone,
+  scope,
+}: {
+  label: string;
+  tone: "fact" | "projected";
+  scope: SimulationScopeSnapshot;
+}) {
+  return (
+    <div className="border border-slate-200 rounded-lg p-3">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-slate-500">{label}</span>
+        <Badge variant={tone}>{tone === "fact" ? "FACT" : "PROJECTED"}</Badge>
+      </div>
+      <dl className="space-y-1 text-sm">
+        <div className="flex justify-between">
+          <dt className="text-slate-500">Failed</dt>
+          <dd className="text-slate-900 font-medium tabular-nums">{scope.failed_event_count}</dd>
+        </div>
+        <div className="flex justify-between">
+          <dt className="text-slate-500">Succeeded</dt>
+          <dd className="text-slate-900 font-medium tabular-nums">{scope.success_event_count}</dd>
+        </div>
+        {scope.exposure_by_currency.map((item) => (
+          <div key={item.currency} className="flex justify-between">
+            <dt className="text-slate-500">Exposure ({item.currency})</dt>
+            <dd className="text-slate-900 font-medium tabular-nums">{item.amount}</dd>
+          </div>
+        ))}
+        {scope.exposure_amount_unknown_count > 0 && (
+          <p className="text-xs text-slate-400 pt-1">
+            {scope.exposure_amount_unknown_count} event
+            {scope.exposure_amount_unknown_count === 1 ? "" : "s"} with no recorded amount
+            (excluded above).
+          </p>
+        )}
+      </dl>
     </div>
   );
 }
