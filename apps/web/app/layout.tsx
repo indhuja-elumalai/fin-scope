@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Link from "next/link";
+
+import { Nav } from "@/components/nav";
 
 import "./globals.css";
 
@@ -26,20 +27,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <nav className="border-b border-neutral-200 px-6 py-3 flex gap-5 text-sm">
-          <Link href="/" className="font-medium">
-            FIN-SCOPE
-          </Link>
-          <Link href="/merchants" className="text-neutral-600 hover:text-neutral-900">
-            Merchants
-          </Link>
-          <Link href="/events" className="text-neutral-600 hover:text-neutral-900">
-            Events
-          </Link>
-          <Link href="/investigations" className="text-neutral-600 hover:text-neutral-900">
-            Investigations
-          </Link>
-        </nav>
+        <Nav />
         {children}
       </body>
     </html>

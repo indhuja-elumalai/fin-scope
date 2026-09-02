@@ -1,8 +1,27 @@
 @import "tailwindcss";
 
+/* Design tokens for the FIN-SCOPE frontend.
+ *
+ * This commits to a single, deliberately-designed light theme rather than
+ * the previous prefers-color-scheme auto-switch. That switch flipped
+ * --background/--foreground for dark mode, but every page's actual UI
+ * (nav links, borders, cards, inputs) used hardcoded Tailwind neutral-*
+ * utility classes that never read those variables -- so a user in OS dark
+ * mode got a dark page background with those same hardcoded near-black
+ * grays for text and borders, which is the navbar "hover text nearly
+ * invisible" bug and would have affected every other page too. Properly
+ * supporting both themes would mean dark-mode-aware variants for every
+ * component; committing to one polished, fully-contrast-checked theme is
+ * the smaller, more reliable change for an internal control-plane tool
+ * that does not need to match the OS theme.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc; /* slate-50 */
+  --surface: #ffffff;
+  --foreground: #0f172a; /* slate-900 */
+  --border-subtle: #e2e8f0; /* slate-200 */
+  --accent: #2563eb; /* blue-600 */
+  --accent-strong: #1d4ed8; /* blue-700 */
 }
 
 @theme inline {
@@ -12,15 +31,25 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+/* A visible, consistent focus ring on every interactive element -- the
+ * default browser outline is suppressed by some of the border/rounded
+ * utility combinations below, so it is replaced rather than removed. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+::selection {
+  background: #bfdbfe; /* blue-200 */
 }

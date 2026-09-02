@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 
+import { Card, ErrorText, LoadingRow } from "@/components/ui";
+
 type HealthCheck = { status: string; detail?: string };
 type HealthResponse = { status: string; checks: Record<string, HealthCheck> };
 
@@ -41,29 +43,49 @@ export default function HealthStatusPage() {
   }, []);
 
   return (
-    <main style={{ maxWidth: 640, margin: "4rem auto", padding: "0 1.5rem", fontFamily: "system-ui, sans-serif" }}>
-      <h1 style={{ fontSize: "1.5rem", fontWeight: 600 }}>FIN-SCOPE</h1>
-      <p style={{ color: "#666", marginTop: "0.25rem" }}>System foundation status</p>
+    <main className="max-w-2xl mx-auto px-6 py-10">
+      <h1 className="text-xl font-semibold text-slate-900">FIN-SCOPE</h1>
+      <p className="text-sm text-slate-500 mt-1">
+        Financial Intelligence, Simulation &amp; Controlled Decision Engine — system foundation
+        status.
+      </p>
 
-      <div style={{ marginTop: "2rem", border: "1px solid #e5e5e5", borderRadius: 8, padding: "1.25rem" }}>
-        {loading && <p>Checking backend health…</p>}
-        {error && <p style={{ color: "#b91c1c" }}>{error}</p>}
+      <Card className="mt-8 p-5">
+        {loading && <LoadingRow>Checking backend health…</LoadingRow>}
+        {error && <ErrorText>{error}</ErrorText>}
         {health && (
           <>
-            <p style={{ fontWeight: 600, color: health.status === "ok" ? "#15803d" : "#b91c1c" }}>
-              Overall: {health.status}
-            </p>
-            <ul style={{ marginTop: "0.75rem", paddingLeft: "1.25rem" }}>
+            <div className="flex items-center gap-2">
+              <span
+                className={`inline-block w-2 h-2 rounded-full ${
+                  health.status === "ok" ? "bg-emerald-500" : "bg-red-500"
+                }`}
+                aria-hidden="true"
+              />
+              <p
+                className={`font-semibold text-sm ${
+                  health.status === "ok" ? "text-emerald-700" : "text-red-700"
+                }`}
+              >
+                Overall: {health.status}
+              </p>
+            </div>
+            <ul className="mt-4 divide-y divide-slate-100">
               {Object.entries(health.checks).map(([name, check]) => (
-                <li key={name}>
-                  {name}: {check.status}
-                  {check.detail ? ` — ${check.detail}` : ""}
+                <li key={name} className="py-2 flex justify-between text-sm">
+                  <span className="text-slate-600">{name}</span>
+                  <span className="text-slate-900">
+                    {check.status}
+                    {check.detail ? (
+                      <span className="text-slate-400"> — {check.detail}</span>
+                    ) : null}
+                  </span>
                 </li>
               ))}
             </ul>
           </>
         )}
-      </div>
+      </Card>
     </main>
   );
 }

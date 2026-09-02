@@ -2,6 +2,17 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorText,
+  Input,
+  Label,
+  LoadingRow,
+  SuccessText,
+} from "@/components/ui";
+
 type Merchant = {
   id: string;
   name: string;
@@ -89,70 +100,63 @@ export default function MerchantsPage() {
   }
 
   return (
-    <main className="max-w-2xl mx-auto px-6 py-12">
-      <h1 className="text-xl font-semibold">Merchants</h1>
-      <p className="text-sm text-neutral-500 mt-1">
+    <main className="max-w-2xl mx-auto px-6 py-10">
+      <h1 className="text-xl font-semibold text-slate-900">Merchants</h1>
+      <p className="text-sm text-slate-500 mt-1">
         Merchants are the tenant boundary every financial event attaches to.
       </p>
 
-      <form
-        onSubmit={handleCreate}
-        className="mt-8 border border-neutral-200 rounded-lg p-5 space-y-3"
-      >
-        <h2 className="font-medium text-sm">Create merchant</h2>
-        <div>
-          <label className="block text-sm text-neutral-600" htmlFor="merchant-name">
-            Name
-          </label>
-          <input
-            id="merchant-name"
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-          />
-        </div>
-        <div>
-          <label className="block text-sm text-neutral-600" htmlFor="merchant-segment">
-            Segment (optional)
-          </label>
-          <input
-            id="merchant-segment"
-            value={segment}
-            onChange={(e) => setSegment(e.target.value)}
-            className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={submitting || !name}
-          className="bg-neutral-900 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50"
-        >
-          {submitting ? "Creating…" : "Create merchant"}
-        </button>
-        {submitError && <p className="text-sm text-red-600">{submitError}</p>}
-        {submitSuccess && <p className="text-sm text-green-700">{submitSuccess}</p>}
-      </form>
+      <Card className="mt-8 p-5">
+        <form onSubmit={handleCreate} className="space-y-4">
+          <h2 className="font-medium text-sm text-slate-900">Create merchant</h2>
+          <div>
+            <Label htmlFor="merchant-name">Name</Label>
+            <Input
+              id="merchant-name"
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div>
+            <Label htmlFor="merchant-segment">Segment (optional)</Label>
+            <Input
+              id="merchant-segment"
+              value={segment}
+              onChange={(e) => setSegment(e.target.value)}
+            />
+          </div>
+          <Button type="submit" disabled={submitting || !name}>
+            {submitting ? "Creating…" : "Create merchant"}
+          </Button>
+          {submitError && <ErrorText>{submitError}</ErrorText>}
+          {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
+        </form>
+      </Card>
 
       <div className="mt-8">
-        <h2 className="font-medium text-sm mb-3">All merchants</h2>
-        {loading && <p className="text-sm text-neutral-500">Loading…</p>}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        <h2 className="font-medium text-sm text-slate-900 mb-3">All merchants</h2>
+        {loading && <LoadingRow>Loading merchants…</LoadingRow>}
+        {error && <ErrorText>{error}</ErrorText>}
         {!loading && !error && merchants.length === 0 && (
-          <p className="text-sm text-neutral-500">No merchants yet.</p>
+          <EmptyState>No merchants yet.</EmptyState>
         )}
         {!loading && merchants.length > 0 && (
-          <ul className="divide-y divide-neutral-200 border border-neutral-200 rounded-lg">
-            {merchants.map((m) => (
-              <li key={m.id} className="px-4 py-3 text-sm flex justify-between">
-                <span>
-                  {m.name}
-                  {m.segment ? <span className="text-neutral-400"> · {m.segment}</span> : null}
-                </span>
-                <span className="text-neutral-400 text-xs">{m.id}</span>
-              </li>
-            ))}
-          </ul>
+          <Card>
+            <ul className="divide-y divide-slate-100">
+              {merchants.map((m) => (
+                <li key={m.id} className="px-4 py-3.5 flex justify-between items-center text-sm">
+                  <span className="text-slate-900 font-medium">
+                    {m.name}
+                    {m.segment ? (
+                      <span className="text-slate-400 font-normal"> · {m.segment}</span>
+                    ) : null}
+                  </span>
+                  <span className="text-slate-400 text-xs font-mono">{m.id}</span>
+                </li>
+              ))}
+            </ul>
+          </Card>
         )}
       </div>
     </main>

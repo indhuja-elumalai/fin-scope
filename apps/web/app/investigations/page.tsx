@@ -3,6 +3,19 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorText,
+  Input,
+  Label,
+  LoadingRow,
+  Select,
+  SuccessText,
+} from "@/components/ui";
+
 type Merchant = { id: string; name: string };
 
 type Investigation = {
@@ -133,83 +146,71 @@ export default function InvestigationsPage() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto px-6 py-12">
-      <h1 className="text-xl font-semibold">Incident investigations</h1>
-      <p className="text-sm text-neutral-500 mt-1">
-        Run a deterministic FIND → dominant-signal → impact analysis over a
-        merchant&apos;s recent financial events. The dominant signal is a
-        frequency heuristic, not a causal finding.
+    <main className="max-w-3xl mx-auto px-6 py-10">
+      <h1 className="text-xl font-semibold text-slate-900">Incident investigations</h1>
+      <p className="text-sm text-slate-500 mt-1">
+        Run a deterministic FIND → dominant-signal → impact analysis over a merchant&apos;s
+        recent financial events, then reason about plausible, evidence-grounded explanations.
       </p>
 
-      <form
-        onSubmit={handleTrigger}
-        className="mt-8 border border-neutral-200 rounded-lg p-5 space-y-3"
-      >
-        <h2 className="font-medium text-sm">Run investigation</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="block text-sm text-neutral-600" htmlFor="investigation-merchant">
-              Merchant
-            </label>
-            <select
-              id="investigation-merchant"
-              required
-              value={triggerMerchant}
-              onChange={(e) => setTriggerMerchant(e.target.value)}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            >
-              <option value="">Select a merchant…</option>
-              {merchants.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-            {merchants.length === 0 && (
-              <p className="text-xs text-neutral-400 mt-1">
-                No merchants yet —{" "}
-                <Link href="/merchants" className="underline">
-                  create one first
-                </Link>
-                .
-              </p>
-            )}
+      <Card className="mt-8 p-5">
+        <form onSubmit={handleTrigger} className="space-y-4">
+          <h2 className="font-medium text-sm text-slate-900">Run investigation</h2>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="investigation-merchant">Merchant</Label>
+              <Select
+                id="investigation-merchant"
+                required
+                value={triggerMerchant}
+                onChange={(e) => setTriggerMerchant(e.target.value)}
+              >
+                <option value="">Select a merchant…</option>
+                {merchants.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </Select>
+              {merchants.length === 0 && (
+                <p className="text-xs text-slate-400 mt-1.5">
+                  No merchants yet —{" "}
+                  <Link href="/merchants" className="text-blue-600 hover:underline">
+                    create one first
+                  </Link>
+                  .
+                </p>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="investigation-as-of">As of (optional, defaults to now)</Label>
+              <Input
+                id="investigation-as-of"
+                type="datetime-local"
+                value={triggerAsOf}
+                onChange={(e) => setTriggerAsOf(e.target.value)}
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-sm text-neutral-600" htmlFor="investigation-as-of">
-              As of (optional, defaults to now)
-            </label>
-            <input
-              id="investigation-as-of"
-              type="datetime-local"
-              value={triggerAsOf}
-              onChange={(e) => setTriggerAsOf(e.target.value)}
-              className="mt-1 w-full border border-neutral-300 rounded px-3 py-1.5 text-sm"
-            />
+          <div className="flex items-center gap-3">
+            <Button type="submit" disabled={submitting || !triggerMerchant}>
+              {submitting ? "Investigating…" : "Run investigation"}
+            </Button>
           </div>
-        </div>
-        <button
-          type="submit"
-          disabled={submitting || !triggerMerchant}
-          className="bg-neutral-900 text-white text-sm rounded px-4 py-1.5 disabled:opacity-50"
-        >
-          {submitting ? "Investigating…" : "Run investigation"}
-        </button>
-        {submitError && <p className="text-sm text-red-600">{submitError}</p>}
-        {submitSuccess && <p className="text-sm text-green-700">{submitSuccess}</p>}
-      </form>
+          {submitError && <ErrorText>{submitError}</ErrorText>}
+          {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
+        </form>
+      </Card>
 
       <div className="mt-8">
-        <div className="flex gap-3 items-end mb-3">
+        <div className="flex gap-4 items-end mb-3">
           <div>
-            <label className="block text-xs text-neutral-500" htmlFor="filter-merchant">
-              Filter by merchant
-            </label>
-            <select
+            <Label htmlFor="filter-merchant">Filter by merchant</Label>
+            <Select
               id="filter-merchant"
               value={filterMerchant}
               onChange={(e) => handleFilterMerchantChange(e.target.value)}
-              className="mt-1 border border-neutral-300 rounded px-2 py-1 text-sm"
+              className="min-w-[14rem]"
             >
               <option value="">All merchants</option>
               {merchants.map((m) => (
@@ -217,34 +218,44 @@ export default function InvestigationsPage() {
                   {m.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </div>
-          <span className="text-xs text-neutral-400">{total} total</span>
+          <span className="text-xs text-slate-400 pb-2">{total} total</span>
         </div>
 
-        {loading && <p className="text-sm text-neutral-500">Loading…</p>}
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {loading && <LoadingRow>Loading investigations…</LoadingRow>}
+        {error && <ErrorText>{error}</ErrorText>}
         {!loading && !error && investigations.length === 0 && (
-          <p className="text-sm text-neutral-500">No investigations match this filter.</p>
+          <EmptyState>No investigations match this filter.</EmptyState>
         )}
         {!loading && investigations.length > 0 && (
-          <ul className="divide-y divide-neutral-200 border border-neutral-200 rounded-lg">
-            {investigations.map((inv) => (
-              <li key={inv.id} className="px-4 py-3 text-sm flex justify-between items-center">
-                <div>
-                  <Link href={`/investigations/${inv.id}`} className="font-medium hover:underline">
-                    {inv.incident_detected ? "Incident detected" : "No incident"}
+          <Card>
+            <ul className="divide-y divide-slate-100">
+              {investigations.map((inv) => (
+                <li key={inv.id}>
+                  <Link
+                    href={`/investigations/${inv.id}`}
+                    className="px-4 py-3.5 flex justify-between items-center gap-4 hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Badge variant={inv.incident_detected ? "danger" : "neutral"}>
+                        {inv.incident_detected ? "Incident" : "No incident"}
+                      </Badge>
+                      <div className="min-w-0">
+                        <div className="text-sm text-slate-500 truncate">
+                          {inv.evidence_event_count} events ·{" "}
+                          {new Date(inv.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-slate-500 text-xs shrink-0">
+                      {inv.dominant_signal_event_type ?? "—"}
+                    </span>
                   </Link>
-                  <div className="text-neutral-400 text-xs">
-                    {inv.evidence_event_count} events · {new Date(inv.created_at).toLocaleString()}
-                  </div>
-                </div>
-                <span className="text-neutral-500 text-xs">
-                  {inv.dominant_signal_event_type ?? "—"}
-                </span>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+          </Card>
         )}
       </div>
     </main>
