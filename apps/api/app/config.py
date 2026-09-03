@@ -44,6 +44,28 @@ class Settings(BaseSettings):
     razorpay_key_id: str | None = None
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
+
+    # Phase 10: a second, explicit gate beyond "the configured key happens
+    # to start with rzp_test_" -- app.providers.razorpay.RazorpayClient
+    # refuses to construct unless this is ALSO explicitly true, so a
+    # misconfigured environment fails closed at construction time rather
+    # than proceeding on prefix-matching alone. Defaults to False: Razorpay
+    # integration is inert by default, exactly like anthropic_api_key was
+    # before Phase 9 configured it.
+    razorpay_test_mode_confirmed: bool = False
+
+    # Phase 10, Milestone 2: Razorpay's webhook payloads identify a
+    # Razorpay *account*, never a FIN-SCOPE merchant -- Merchant has no
+    # provider-account mapping today, and a schema change to add one is
+    # not justified for a single-TEST-account integration. Every accepted
+    # webhook is attributed to this one merchant until multi-merchant
+    # mapping is genuinely needed. Optional so importing this module
+    # never breaks before an operator configures it -- see
+    # app.domain.razorpay_webhooks.process_webhook, which treats an
+    # unset or invalid value as an internal configuration failure (5xx,
+    # never silently guessed, never ledger-recorded so a corrected
+    # retry can still succeed).
+    razorpay_default_merchant_id: str | None = None
     anthropic_api_key: str | None = None
 
     # Phase 9: the only two provider knobs worth exposing as configuration

@@ -76,6 +76,57 @@ def test_anthropic_workspace_id_defaults_to_none_and_is_overridable(
     assert settings.anthropic_workspace_id == "wrkspc_test_override"
 
 
+def test_razorpay_test_mode_confirmed_defaults_to_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 10: must default to False so Razorpay integration stays inert
+    (app.providers.razorpay.RazorpayClient refuses to construct) unless an
+    operator has explicitly opted in -- exactly the fail-closed-by-default
+    posture the Phase 10 plan requires."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.delenv("RAZORPAY_TEST_MODE_CONFIRMED", raising=False)
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.razorpay_test_mode_confirmed is False
+
+
+def test_razorpay_test_mode_confirmed_is_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.setenv("RAZORPAY_TEST_MODE_CONFIRMED", "true")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.razorpay_test_mode_confirmed is True
+
+
+def test_razorpay_default_merchant_id_defaults_to_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 10, Milestone 2: must default to None so importing Settings
+    never breaks before an operator configures the webhook receiver --
+    app.routers.razorpay_webhooks fails closed (500) at request time
+    instead when this is unset, rather than Settings() itself requiring
+    it."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.delenv("RAZORPAY_DEFAULT_MERCHANT_ID", raising=False)
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.razorpay_default_merchant_id is None
+
+
+def test_razorpay_default_merchant_id_is_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.setenv("RAZORPAY_DEFAULT_MERCHANT_ID", "11111111-1111-1111-1111-111111111111")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.razorpay_default_merchant_id == "11111111-1111-1111-1111-111111111111"
+
+
 def test_env_file_path_is_absolute_and_cwd_independent() -> None:
     """Regression test for a real bug found during Phase 2 verification.
 

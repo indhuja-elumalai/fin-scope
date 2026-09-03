@@ -20,9 +20,13 @@ from app.db import get_db
 from app.domain import actions as action_domain
 from app.domain import decisions as decision_domain
 from app.domain import investigations as investigation_domain
+from app.domain import razorpay_action as razorpay_action_domain
+from app.domain import razorpay_verification as razorpay_verification_domain
 from app.domain import reasoning as reasoning_domain
 from app.domain import simulation as simulation_domain
 from app.domain import verifications as verification_domain
+from app.domain.razorpay_action import RazorpayClientProtocol
+from app.providers.razorpay import RazorpayClient, RazorpayConfigurationError
 from app.providers.reasoning import HostedReasoningProvider, ReasoningProvider
 from app.schemas.action import ActionListResponse, ActionRead
 from app.schemas.decision import DecisionListResponse, DecisionRead
@@ -30,6 +34,11 @@ from app.schemas.investigation import (
     InvestigationCreate,
     InvestigationListResponse,
     InvestigationRead,
+)
+from app.schemas.razorpay_action import RazorpayActionListResponse, RazorpayActionRead
+from app.schemas.razorpay_verification import (
+    RazorpayVerificationListResponse,
+    RazorpayVerificationRead,
 )
 from app.schemas.reasoning import InvestigationReasoningRead
 from app.schemas.simulation import SimulationCreate, SimulationListResponse, SimulationRead
@@ -71,6 +80,38 @@ def get_reasoning_provider() -> ReasoningProvider | None:
         timeout_seconds=settings.anthropic_timeout_seconds,
         workspace_id=settings.anthropic_workspace_id,
     )
+
+
+def get_razorpay_client() -> RazorpayClient | None:
+    """The configured real Razorpay TEST-mode client, or None if
+    unconfigured -- mirrors get_reasoning_provider()'s injection pattern
+    exactly (see that function's own docstring), so tests can override it
+    with a fake client via `app.dependency_overrides`, and no test in
+    this codebase ever exercises the real Razorpay API.
+
+    Returning None (rather than raising) is what lets
+    app.domain.razorpay_action.run_razorpay_action's own "no client
+    configured" branch reject a razorpay-action request cleanly -- as a
+    persisted, auditable rejection -- instead of the router attempting a
+    doomed construction. RazorpayClient's own constructor (see
+    app.providers.razorpay) is the actual, structural TEST-mode guard
+    (rzp_test_ prefix AND test_mode_confirmed=True); this function never
+    weakens or duplicates that check, it only decides whether
+    construction is attempted at all, and treats a defensive
+    RazorpayConfigurationError from that constructor the same as
+    "unconfigured" rather than letting it surface as a 500.
+    """
+    settings = get_settings()
+    if not settings.razorpay_key_id or not settings.razorpay_key_secret:
+        return None
+    try:
+        return RazorpayClient(
+            settings.razorpay_key_id,
+            settings.razorpay_key_secret,
+            test_mode_confirmed=settings.razorpay_test_mode_confirmed,
+        )
+    except RazorpayConfigurationError:
+        return None
 
 
 @router.post("", response_model=InvestigationRead, status_code=status.HTTP_201_CREATED)
@@ -553,6 +594,236 @@ def list_verifications(
     )
     return VerificationListResponse(
         items=[VerificationRead.model_validate(v) for v in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+# --- Phase 10, Milestone 3: REAL Razorpay TEST action + verification ---
+# Additive only -- nothing above this point in the file is modified by
+# Milestone 3 beyond the get_razorpay_client() dependency and the import
+# block. See app.domain.razorpay_action / app.domain.razorpay_verification
+# for the orchestration these endpoints call.
+
+
+@router.post(
+    "/{investigation_id}/decisions/{decision_id}/razorpay-action",
+    response_model=RazorpayActionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_razorpay_action(
+    investigation_id: uuid.UUID,
+    decision_id: uuid.UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+    client: RazorpayClientProtocol | None = Depends(get_razorpay_client),
+) -> RazorpayActionRead:
+    """Authorize (or reject) and, if authorized AND a real Razorpay TEST
+    client is configured, create a REAL (TEST-mode) Razorpay Order for a
+    single persisted Phase 6 decision.
+
+    Takes no request body -- the decision named by `decision_id` is the
+    entire authorization context; there is no field anywhere in this
+    request a client could use to submit a scenario, amount, currency,
+    Order data, authorization, or policy decision (see
+    app.domain.razorpay_action). This creates a NEW, independent Razorpay
+    TEST Order -- it is never a retry of any specific existing payment
+    (see that module's semantic-honesty rule).
+
+    `decision_id` is the idempotency anchor: at most one razorpay action
+    row exists per decision. 201 the first time a decision is acted on --
+    whether the outcome is "executed", "pending", or "rejected"; a
+    rejection is itself a persisted, auditable outcome, never an HTTP
+    error. 200 on every subsequent call against the same decision_id.
+    Repeating the request never creates a second Razorpay Order. 404 only
+    when the investigation or the decision itself does not exist, or the
+    decision belongs to a different investigation.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    try:
+        action, created = razorpay_action_domain.run_razorpay_action(
+            db, investigation_id=investigation_id, decision_id=decision_id, client=client
+        )
+    except razorpay_action_domain.DecisionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Decision {exc} not found"
+        ) from exc
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return RazorpayActionRead.model_validate(action)
+
+
+@router.get(
+    "/{investigation_id}/decisions/{decision_id}/razorpay-action",
+    response_model=RazorpayActionRead,
+)
+def get_razorpay_action_for_decision(
+    investigation_id: uuid.UUID,
+    decision_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> RazorpayActionRead:
+    """The real Razorpay TEST action attempted for a single decision, if
+    any. 404 if the investigation or decision does not exist (or the
+    decision belongs to a different investigation), or if no razorpay
+    action has been attempted for this decision yet.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    decision = decision_domain.get_decision(
+        db, investigation_id=investigation_id, decision_id=decision_id
+    )
+    if decision is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Decision not found")
+    action = razorpay_action_domain.get_action_for_decision(
+        db, investigation_id=investigation_id, decision_id=decision_id
+    )
+    if action is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No real Razorpay TEST action has been attempted for this decision yet",
+        )
+    return RazorpayActionRead.model_validate(action)
+
+
+@router.get("/{investigation_id}/razorpay-actions", response_model=RazorpayActionListResponse)
+def list_razorpay_actions(
+    investigation_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> RazorpayActionListResponse:
+    """Append-only real Razorpay TEST action history for one
+    investigation, across every decision it has ever acted on, newest
+    first. 404 if the investigation itself does not exist.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    items, total = razorpay_action_domain.list_actions(
+        db, investigation_id=investigation_id, limit=limit, offset=offset
+    )
+    return RazorpayActionListResponse(
+        items=[RazorpayActionRead.model_validate(a) for a in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/{investigation_id}/razorpay-actions/{action_id}/verification",
+    response_model=RazorpayVerificationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_razorpay_verification(
+    investigation_id: uuid.UUID,
+    action_id: uuid.UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> RazorpayVerificationRead:
+    """Deterministically verify a single persisted real Razorpay TEST
+    action against a REAL, already-persisted Razorpay webhook observation
+    -- never against Phase 5/7 simulation/sandbox output or LLM output
+    (see app.domain.razorpay_verification).
+
+    Takes no request body. `action_id` is the idempotency anchor: at most
+    one razorpay verification row exists per razorpay action. 201 the
+    first time an action is verified, 200 on every subsequent call
+    against the same action_id -- always returning the exact same
+    persisted result, never re-comparing. 404 only when the investigation
+    or the razorpay action itself does not exist, or the action belongs
+    to a different investigation. A rejected/pending action, or one with
+    no matching webhook observation yet, is still verifiable -- it
+    deterministically persists as INSUFFICIENT_OBSERVATION, never an HTTP
+    error and never a pretended outcome.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    try:
+        verification, created = razorpay_verification_domain.run_razorpay_verification(
+            db, investigation_id=investigation_id, razorpay_action_id=action_id
+        )
+    except razorpay_verification_domain.RazorpayActionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Razorpay action {exc} not found"
+        ) from exc
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return RazorpayVerificationRead.model_validate(verification)
+
+
+@router.get(
+    "/{investigation_id}/razorpay-actions/{action_id}/verification",
+    response_model=RazorpayVerificationRead,
+)
+def get_razorpay_verification_for_action(
+    investigation_id: uuid.UUID,
+    action_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> RazorpayVerificationRead:
+    """The razorpay outcome verification for a single razorpay action, if
+    any. 404 if the investigation or action does not exist (or the action
+    belongs to a different investigation), or if this action has not been
+    verified yet.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    action = razorpay_action_domain.get_action(
+        db, investigation_id=investigation_id, action_id=action_id
+    )
+    if action is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Razorpay action not found"
+        )
+    verification = razorpay_verification_domain.get_verification_for_action(
+        db, investigation_id=investigation_id, razorpay_action_id=action_id
+    )
+    if verification is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This razorpay action has not been verified yet",
+        )
+    return RazorpayVerificationRead.model_validate(verification)
+
+
+@router.get(
+    "/{investigation_id}/razorpay-verifications",
+    response_model=RazorpayVerificationListResponse,
+)
+def list_razorpay_verifications(
+    investigation_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> RazorpayVerificationListResponse:
+    """Append-only razorpay-outcome-verification history for one
+    investigation, across every razorpay action it has ever verified,
+    newest first. 404 if the investigation itself does not exist.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found"
+        )
+    items, total = razorpay_verification_domain.list_verifications(
+        db, investigation_id=investigation_id, limit=limit, offset=offset
+    )
+    return RazorpayVerificationListResponse(
+        items=[RazorpayVerificationRead.model_validate(v) for v in items],
         total=total,
         limit=limit,
         offset=offset,
