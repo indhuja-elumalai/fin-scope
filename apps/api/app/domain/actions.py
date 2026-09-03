@@ -295,6 +295,23 @@ def _authorize_and_execute(
     )
 
 
+def get_action(
+    db: Session, *, investigation_id: uuid.UUID, action_id: uuid.UUID
+) -> InvestigationAction | None:
+    """A single action by its own id, scoped to `investigation_id` -- an
+    action belonging to a different investigation is treated as not found,
+    never returned. Added for Phase 8 (outcome verification), which
+    addresses an action directly by `action_id` rather than by the
+    decision_id it is idempotent on -- see app.domain.verifications, which
+    anchors a verification to exactly one persisted action the same way
+    this module anchors an action to exactly one persisted decision.
+    """
+    action = db.get(InvestigationAction, action_id)
+    if action is None or action.investigation_id != investigation_id:
+        return None
+    return action
+
+
 def get_action_for_decision(
     db: Session, *, investigation_id: uuid.UUID, decision_id: uuid.UUID
 ) -> InvestigationAction | None:

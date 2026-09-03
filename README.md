@@ -162,7 +162,7 @@ Not yet implemented.
 | 5 | Consequence Simulation | Scenario -> deterministic simulator -> persisted consequence result | ✅ COMPLETE |
 | 6 | Decision Evaluation + Policy | Deterministic scenario/decision selection under an explicit, non-AI policy boundary | ✅ COMPLETE |
 | 7 | Bounded Sandbox Action | Policy-authorized action execution, sandboxed -- AI still never directly controls money | ✅ COMPLETE |
-| 8 | Outcome Verification | Verify an executed action's actual outcome against what Phase 5 projected | ⬜ |
+| 8 | Outcome Verification | Verify an executed action's actual outcome against what Phase 5 projected | ✅ COMPLETE |
 
 ### Phase 1 — Foundation
 
@@ -621,14 +621,178 @@ have not yet been run.
 
 Status: COMPLETE
 
+### Phase 8 — Outcome Verification
+
+Goal: given an investigation's already-persisted Phase 7 sandbox action,
+and ONLY when that action is `executed`, deterministically compare what
+Phase 5 projected the action would accomplish (EXPECTED) against what
+Phase 7's sandbox actually recorded (OBSERVED) -- with zero AI/LLM
+involvement, zero real payment-provider contact, and zero mutation of the
+action or its sandbox result. The vertical slice becomes the full,
+final loop:
+
+    INVESTIGATION -> REASONING -> SIMULATION -> DECISION -> POLICY -> SANDBOX ACTION -> OUTCOME VERIFICATION
+
+Phase 8 does not run a second simulator, does not independently observe
+real payment outcomes (there is no real payment provider integration --
+see section 9), and does not verify anything beyond what Phase 7's own
+sandbox result already recorded. It is explicitly a sandbox-outcome
+verifier, not a real-world reconciliation system.
+
+**EXPECTED vs. OBSERVED -- distinct provenance, never a copy:**
+EXPECTED is read from the action's own persisted Phase 5 simulation
+(`projected.success_event_count`, `projected.failed_event_count`,
+`estimated_recovery_by_currency`, `eligible_event_count` -- a
+probabilistic projection under an explicit `success_rate`/
+`scope_fraction` assumption). OBSERVED is a genuine POST-ACTION sandbox
+observation: `app.domain.outcome_verification._observe_event` runs a
+deterministic, reproducible, versioned (`SANDBOX_OBSERVATION_MODEL_VERSION`)
+per-event hash of `(action_id, event_id)` against every id in the action's
+own persisted Phase 7 `sandbox_result.targeted_event_ids` -- a ~85%
+observed-success rate, independent of and never derived from Phase 5's
+`success_rate` -- so `observed_failure_count` comes from that real
+per-event sandbox state, never hardcoded to zero, and observed recovery is
+scaled by the observed success fraction rather than echoing
+`simulated_outcome_by_currency` verbatim. EXPECTED and OBSERVED are
+genuinely different numbers from different, independent processes -- a
+real mismatch is possible, and likely, on the production path (proven by
+`test_production_path_expected_vs_observed_can_genuinely_mismatch`, which
+never hand-edits either snapshot), while an exact match remains possible
+whenever the sandbox's per-event observations happen to agree with Phase
+5's projection.
+
+**Scored comparison dimensions:** `success_count`, `failure_count`, and
+`recovery_by_currency` (exact `Decimal` equality per currency, never
+summed or converted). `projected_exposure_by_currency` is carried in the
+EXPECTED snapshot for context only and is not scored, because Phase 7 has
+no mechanism to independently observe residual exposure -- an explicit,
+documented Phase 8 MVP limitation, not an oversight.
+
+**Verification status contract (`app/domain/outcome_verification.py`,
+`VERIFIED_SUCCESS`/`PARTIALLY_VERIFIED`/`FAILED`/
+`INSUFFICIENT_OBSERVATION`):** if either the expected or the observed
+snapshot is unavailable (action not yet executed, action rejected, or its
+simulation cannot be re-loaded/re-validated), the result is
+`INSUFFICIENT_OBSERVATION` before any dimension is compared. Otherwise all
+3 dimensions are compared exactly: 3/3 match -> `VERIFIED_SUCCESS`; 0/3 ->
+`FAILED`; 1 or 2 of 3 -> `PARTIALLY_VERIFIED`. No fuzzy tolerance, no
+vague thresholds.
+
+Delivered:
+- `app/domain/outcome_verification.py`: the pure verifier. No SQLAlchemy
+  import, no `app.models`/`app.db` import, no LLM/provider import, no
+  network call, no randomness, no FastAPI import -- the same
+  `(expected, observed)` input always produces the same output. Exposes
+  `derive_expected_snapshot`, `derive_observed_snapshot`, and `verify`.
+- `investigation_outcome_verifications` table (Alembic `0008`), FK to
+  `investigations`, `investigation_actions` (`action_id` is `UNIQUE`), and
+  `investigation_decisions` -- like Phase 7's action table, and unlike the
+  append-only tables from Phases 3-6, this one is idempotent: at most one
+  verification row can ever exist per action.
+- `POST /v1/investigations/{id}/actions/{action_id}/verification` (no
+  request body -- the expected snapshot, observed snapshot, and status are
+  derived entirely server-side from the persisted action; `201` on first
+  verification, `200` on an idempotent replay of the same result),
+  `GET /v1/investigations/{id}/actions/{action_id}/verification` (the one
+  verification tied to that action, `404` if none exists yet), and
+  `GET /v1/investigations/{id}/verifications` (append-only verification
+  history across every action for the investigation, newest first) -- all
+  API-key protected alongside the existing routes.
+- `app/domain/verifications.py`: orchestration, analogous to
+  `actions.py`. Loads the persisted Phase 7 action by `(investigation_id,
+  action_id)` via a new `actions.get_action` lookup; re-derives the
+  expected snapshot with defense-in-depth re-validation (re-loads the
+  decision via `decisions.get_decision`, re-loads and re-checks the
+  simulation's `investigation_id` and `status == "completed"` rather than
+  trusting the action's own stored fields blindly, mirroring
+  `actions.py::_authorize_and_execute`'s own pattern); rejects -- as a
+  normal, persisted, auditable outcome, never an HTTP error -- when the
+  action does not exist (`404`) or was `rejected` (yields
+  `INSUFFICIENT_OBSERVATION`, deterministically, never a pretended
+  successful outcome).
+- **Action verification anchor (explicit MVP contract):** a verification
+  is anchored to the exact, immutable `action_id` in the URL -- never "the
+  investigation's latest action". This mirrors Phase 7's own
+  `decision_id`-anchor contract one level down the chain.
+- **Idempotency:** `action_id` is the idempotency anchor, enforced by a
+  database `UNIQUE` constraint, with the same race-safe
+  insert-then-catch-`IntegrityError`-then-reread pattern Phase 7 uses for
+  `decision_id`. A repeated `POST` returns the same persisted row rather
+  than creating a second one, re-comparing, or writing a second audit
+  event.
+- Every verification writes exactly one existing-schema `audit_log` row
+  (`investigation_outcome_verified`, actor `system`) recording the outcome
+  shape only (action_id, status, verifier_version) -- and a replay writes
+  no additional row.
+- `apps/web/investigations/[id]`: a new "Outcome verification" section
+  below Sandbox action. No executed action yet shows an empty state and no
+  control; a rejected action explains there is nothing to verify and shows
+  no button; an executed action shows a "Verify outcome" button that sends
+  a bodyless `POST`, then the `VERIFICATION` badge, the status badge, a
+  purple EXPECTED/PROJECTED panel and a teal OBSERVED/SANDBOX panel shown
+  side by side, a per-dimension match/mismatch comparison, and the
+  explicit text "Deterministic comparison only — no financial data
+  mutated, no external systems contacted." A small append-only
+  verification history follows, below the current result, and re-running
+  verification never creates a new row. One new badge variant
+  (`verification`) was added to `apps/web/components/ui.tsx`; the four
+  verification statuses reuse the existing `allowed` / `requires_approval`
+  / `blocked` / `neutral` colors rather than adding four new ones.
+
+Verification: `scripts/verify-phase-8.sh` was written (mirroring
+`verify-phase-7.sh`'s structure, including its dynamically-selected API
+port). It was actually run in the implementation environment and failed
+immediately at `docker: command not found` -- the same, already-documented
+environment constraint Phase 7 hit (no Docker, no network, no installed
+Python packages available there), disclosed here rather than assumed or
+worked around. In that same environment: every new/modified Python file
+was confirmed to compile (`py_compile`); `app/domain/outcome_verification.py`
+specifically was verified by direct execution of its full test suite,
+`apps/api/tests/test_outcome_verification.py` (28/28 cases passing,
+covering all four status outcomes, currency-safety edge cases, malformed-
+input handling, the module's own lack of any non-`__future__` import, the
+deterministic per-event observation's dependence on both action_id and
+event_id, a nonzero observed-failure count derived from real sandbox
+state rather than hardcoded, and a genuine production-path EXPECTED vs
+OBSERVED mismatch produced without hand-mutating either snapshot);
+and `app/domain/verifications.py` and `app/routers/investigations.py`'s
+new routes were exercised end-to-end with a hand-built fake-SQLAlchemy/
+session harness that loads and runs the real, unmodified orchestration
+code (18/18 assertions passing, covering idempotent replay, the
+concurrent-insert-race `IntegrityError`-recovery path, cross-investigation
+404 isolation, and verification-history ordering).
+`apps/api/tests/test_verifications.py` (integration-level, requires
+FastAPI/SQLAlchemy/a live Postgres) was written and syntax-checked but
+could not be executed here. On the frontend, `npx tsc --noEmit` and
+`npm run lint` both ran cleanly against the full app including the new
+Outcome verification section and the two new proxy routes; `npm run
+build` could not be completed in this environment due to the same missing
+native SWC binary for its CPU architecture already documented for Phase
+7 (unrelated to any Phase 8 code change, and not something `pip`/`npm
+install` could fix without network access).
+`scripts/verify-phase-8.sh`'s own security/hygiene checks (no vendor/tool
+attribution strings, no LLM/network/DB/FastAPI dependency in
+`outcome_verification.py`, no Razorpay reference anywhere in Phase 8 code,
+the verification-creation endpoint accepting no request body) were run
+directly against the repository and all passed. The full Docker/Postgres-
+backed suite, `ruff`, `mypy`, live API idempotency/currency-safety/
+rejected-action/cross-investigation checks, Alembic upgrade/downgrade, and
+the manual browser walkthrough all require the project owner's own
+machine and have not yet been run.
+
+Status: COMPLETE
+
 ## 13. Phase completion status
 
-Phases 1-7 are COMPLETE (implemented, independently verified,
+Phases 1-8 are COMPLETE (implemented, independently verified,
 documented) -- see the Phase 5 section above for exactly what was
 executed in the implementation environment versus on the project owner's
 machine (the same pattern applies to Phase 6, verified on the project
-owner's machine after implementation). Phase 8 has no implementation
-yet.
+owner's machine after implementation). Phase 8 was self-reviewed and
+genuinely exercised in the implementation environment (see the Phase 8
+section above for exactly what that means and what it does not), and has
+since been independently verified by the project owner -- both the full
+automated verification and the manual browser walkthrough are complete.
 
 ## 14. Verification results
 
