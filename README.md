@@ -163,6 +163,7 @@ Not yet implemented.
 | 6 | Decision Evaluation + Policy | Deterministic scenario/decision selection under an explicit, non-AI policy boundary | ✅ COMPLETE |
 | 7 | Bounded Sandbox Action | Policy-authorized action execution, sandboxed -- AI still never directly controls money | ✅ COMPLETE |
 | 8 | Outcome Verification | Verify an executed action's actual outcome against what Phase 5 projected | ✅ COMPLETE |
+| 9 | Real Claude Reasoning + AI Evaluation | Wire the real Anthropic API through the existing Phase 4 provider boundary, plus a controlled offline evaluation module | 🔶 IMPLEMENTED (offline-verified; live call pending owner approval) |
 
 ### Phase 1 — Foundation
 
@@ -782,6 +783,117 @@ machine and have not yet been run.
 
 Status: COMPLETE
 
+### Phase 9 -- Real Claude Reasoning + AI Evaluation
+
+Goal: connect the real, hosted Anthropic API through Phase 4's existing
+provider boundary -- not a new integration, an activation of one that
+already existed -- and add a small, separate, offline evaluation module
+that measures actual reasoning behavior against controlled scenarios,
+without becoming part of the `/reason` request path itself.
+
+This phase deliberately did not redesign anything: `app.providers.reasoning
+.HostedReasoningProvider` was already a real adapter calling
+`https://api.anthropic.com/v1/messages` over `httpx` before Phase 9 --
+confirmed by a repository audit before any code was touched (see the
+Phase 9 audit in this project's own history). The frozen call chain
+(`POST /reason` -> `run_reasoning` -> `ReasoningProvider` ->
+`HostedReasoningProvider` -> Anthropic Messages API -> structured
+parsing -> evidence-grounding validation -> persistence -> audit log) is
+unchanged; every existing test in `test_reasoning.py` (the domain/API
+layer, exercised entirely through `FakeReasoningProvider`) required zero
+changes, because none of this phase's edits touched
+`app.domain.reasoning.py`.
+
+Delivered:
+- `Settings.anthropic_model` / `Settings.anthropic_timeout_seconds`
+  (`app/config.py`): the only two provider knobs Phase 9 promoted from
+  hardcoded module constants to configuration, both optional with
+  defaults (`claude-sonnet-5`, `30.0`) so no existing startup path or test
+  needs them set. The API URL and API version stay internal constants in
+  `app/providers/reasoning.py` -- there was no concrete reason to expose
+  them.
+- `HostedReasoningProvider.__init__` now takes `model` / `timeout_seconds`
+  as keyword arguments (still defaulting to the same values, so any
+  existing direct construction keeps working); `app.routers.investigations
+  .get_reasoning_provider()` now passes `settings.anthropic_model` /
+  `settings.anthropic_timeout_seconds` through explicitly rather than
+  relying on those defaults, so a real request always uses whatever is
+  actually configured.
+- The Phase 9 default model is `claude-sonnet-5`, replacing the
+  previously-hardcoded `claude-haiku-4-5` -- one provider, one model, no
+  routing, no automatic fallback.
+- The existing provider-error sanitization (never leaking upstream
+  account/billing detail, upstream response bodies, or the API key into
+  `InvestigationReasoning.failure_reason` or any API/UI response) is
+  unchanged and re-verified by both the pre-existing and new tests in
+  `apps/api/tests/test_reasoning_provider.py`.
+- `app/eval/reasoning_eval.py`: a new, separate, deterministic evaluation
+  module -- never imported by `app.routers.investigations`,
+  `app.domain.reasoning`, or `app.providers.reasoning`, never called
+  during a normal `/reason` request, and itself makes no provider call,
+  database query, or mutation of any kind. It consumes an already-produced
+  reasoning result (`ReasoningResultInput`, built from a persisted
+  `InvestigationReasoning` row via `from_persisted()`, or by hand in
+  tests) plus a controlled, human-authored `EvaluationCase` (an expected
+  status and, where relevant, the scenario's own known-valid evidence ids)
+  and reports which of nine measurable properties actually held:
+  `evidence_grounding`, `unsupported_claim_handling`,
+  `hypothesis_structure`, `confidence_handling`, `contradiction_handling`,
+  `insufficient_evidence_handling`, `deterministic_reasoning_boundary`,
+  `failure_behavior`, and `uncertainty_articulation` -- plus a top-level
+  `expected_status_matched` comparison (which is what "was a known-bad
+  evidence reference actually rejected" and "was insufficient evidence
+  actually recognized" reduce to). Every category re-verifies an
+  already-implemented Phase 4 invariant against real output; it does not
+  invent new validation rules of its own, and it never produces an
+  accuracy number that was not derived from an actual measured run.
+- `apps/api/tests/test_reasoning_live_smoke.py`: exactly one deliberate,
+  opt-in-only live call, skipped entirely unless `RUN_LIVE_CLAUDE_TEST=1`
+  is explicitly set -- never part of a normal `pytest` run, never
+  automatic, no retry, no loop. See section 17 (Testing) for the exact
+  command.
+- `.env.example`: documents `ANTHROPIC_MODEL` / `ANTHROPIC_TIMEOUT_SECONDS`
+  alongside the existing `ANTHROPIC_API_KEY`, all three optional.
+
+Deterministic financial boundary (unchanged, re-verified): nothing in this
+phase gives Claude access to `amount`, `currency`, simulation results,
+decisions, policy, or action execution -- `app.eval.reasoning_eval`'s
+`deterministic_reasoning_boundary` check specifically guards against a
+hypothesis ever carrying one of those fields, as a structural backstop on
+top of the schema (`app.schemas.reasoning.Hypothesis`) already not
+defining them.
+
+Verification: `ruff check .`, `mypy .`, and the full backend test suite
+could not be executed in the writing environment (no project virtualenv
+with fastapi/sqlalchemy/pydantic/httpx/pytest was reachable there -- the
+same, already-documented constraint every prior phase in this repository's
+history has hit). Every new and modified Python file was confirmed to
+compile (`py_compile`). `app/eval/reasoning_eval.py` and
+`apps/api/tests/test_reasoning_eval.py` were both executed directly
+(bypassing only the unrelated sqlalchemy import chain
+`app.domain.reasoning` pulls in for its one `CONFIDENCE_LEVELS` constant,
+stubbed to that one constant -- neither file has any other external
+dependency): 12/12 passed, including the two cases that caught real bugs
+during this phase's own implementation (a status/category-collision bug in
+an earlier draft of the evaluation report, and an incorrect assumption
+that `insufficient_evidence` never carries a `failure_reason`, when
+`run_reasoning` always sets one) -- both fixed before this report, not
+worked around in the tests. `apps/api/tests/test_reasoning_provider.py`
+(9/9, including the 5 pre-existing tests and 4 new ones covering model/
+timeout configuration, successful response parsing, and a malformed
+reasoning response) was executed the same way, stubbing only `httpx` and
+the two `pytest.raises`/`pytest.mark.skipif` primitives it uses -- no
+network, no real API key. `apps/api/tests/test_reasoning.py` (the FakeReasoningProvider-based domain/API suite, requiring FastAPI/SQLAlchemy) and
+`apps/api/tests/test_config.py`'s two new Settings-default tests (requiring
+pydantic-settings) could not be executed here and were syntax-checked
+only; neither required any change beyond the two new `test_config.py`
+cases, since no existing behavior they cover was touched.
+**No request was made to the real Anthropic API at any point during
+implementation or offline verification.** The one live smoke test exists
+but has not been run.
+
+Status: IMPLEMENTED (offline-verified; live call pending owner approval)
+
 ## 13. Phase completion status
 
 Phases 1-8 are COMPLETE (implemented, independently verified,
@@ -793,6 +905,14 @@ genuinely exercised in the implementation environment (see the Phase 8
 section above for exactly what that means and what it does not), and has
 since been independently verified by the project owner -- both the full
 automated verification and the manual browser walkthrough are complete.
+Phase 9 is IMPLEMENTED but not yet COMPLETE: the configuration and
+provider changes are made, the new evaluation module and its tests were
+actually executed offline (see the Phase 9 section above), and no request
+was made to the real Anthropic API at any point -- by design, per an
+explicit non-negotiable safety rule for this phase. Phase 9 will not be
+marked COMPLETE until the one deliberate live smoke test
+(`RUN_LIVE_CLAUDE_TEST=1 pytest tests/test_reasoning_live_smoke.py`) has
+actually been run, by the project owner, with their own approval.
 
 ## 14. Verification results
 
@@ -898,9 +1018,12 @@ by the backend at startup; `DATABASE_URL` and `REDIS_URL` default to the
 local docker-compose services. `CORS_ALLOWED_ORIGINS` is only read outside
 development (in development, `localhost:3000`/`:3001` are always allowed).
 Razorpay keys remain reserved for a later phase and are optional until
-then. `ANTHROPIC_API_KEY` configures the Phase 4 reasoning provider (see
+then. `ANTHROPIC_API_KEY` configures the Phase 4/9 reasoning provider (see
 section 12) and is optional -- without it, reasoning reports itself as
-unavailable rather than failing. `.env` is never committed.
+unavailable rather than failing. `ANTHROPIC_MODEL` (default
+`claude-sonnet-5`) and `ANTHROPIC_TIMEOUT_SECONDS` (default `30`) are also
+optional, added in Phase 9 -- neither is required for startup or for any
+existing test. `.env` is never committed.
 
 The frontend reads two kinds of variables from `apps/web/.env.local`
 (see `apps/web/.env.local.example`): `NEXT_PUBLIC_API_BASE_URL`, used
@@ -932,10 +1055,26 @@ reasoning test injects a fake provider via FastAPI's `dependency_overrides`
 credits, or requires network access. `apps/api/tests/test_reasoning_provider.py`
 separately unit-tests `HostedReasoningProvider` itself (the one class the
 tests above deliberately never exercise) by mocking `httpx.post` with the
-standard library `unittest.mock` -- covering a malformed response body, a
-timeout, and, specifically, that an upstream error response's raw text
-never leaks into the exception message that becomes
-`InvestigationReasoning.failure_reason`. `apps/api/tests/test_simulation.py`
+standard library `unittest.mock` -- covering model/timeout configuration
+reaching the real request, successful response parsing, a malformed
+response body, a malformed-but-parseable reasoning response, a timeout,
+and, specifically, that an upstream error response's raw text never leaks
+into the exception message that becomes
+`InvestigationReasoning.failure_reason`. `apps/api/app/eval/reasoning_eval.py`
+(Phase 9) is tested by `apps/api/tests/test_reasoning_eval.py` -- a
+correctly-grounded hypothesis, an ungrounded supporting/contradicting
+evidence reference, an unsupported claim (no supporting evidence), a
+malformed hypothesis shape, insufficient evidence, an unarticulated
+uncertainty, and a status mismatch alone failing the report even when
+every per-hypothesis check passes -- entirely offline, no provider, no
+database. `apps/api/tests/test_reasoning_live_smoke.py` (Phase 9) makes
+exactly one real call to the Anthropic API, and only when explicitly
+opted into:
+
+    RUN_LIVE_CLAUDE_TEST=1 pytest tests/test_reasoning_live_smoke.py -v -s
+
+It is skipped (not run) under a normal `pytest` invocation and in CI, and
+requires a real `ANTHROPIC_API_KEY` already configured. `apps/api/tests/test_simulation.py`
 tests the Phase 5 deterministic simulator: each of the four scenarios'
 eligibility rule and math, identical output for identical input run twice,
 currency separation, a missing amount never fabricated as zero, invalid

@@ -30,15 +30,23 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Model alias for the hosted reasoning API this adapter calls. A small,
-# fast model is deliberately chosen: this call only has to produce a short
-# structured JSON hypothesis list from a compact evidence summary, not open-
-# ended generation.
-_MODEL = "claude-haiku-4-5"
+# The hosted reasoning API endpoint itself: an internal implementation
+# detail of this one adapter, not exposed as configuration -- there is no
+# concrete reason yet for a caller to ever need a different URL/version.
 _API_URL = "https://api.anthropic.com/v1/messages"
 _API_VERSION = "2023-06-01"
-_TIMEOUT_SECONDS = 30.0
 _MAX_OUTPUT_TOKENS = 2048
+
+# Phase 9 defaults for the two knobs that ARE configurable (see
+# Settings.anthropic_model / Settings.anthropic_timeout_seconds in
+# app.config, and HostedReasoningProvider.__init__ below). Used only as
+# this class's own constructor defaults so existing call sites/tests that
+# construct HostedReasoningProvider(api_key=...) without the new keyword
+# arguments keep working unchanged; app.routers.investigations.
+# get_reasoning_provider() always passes the real configured values
+# explicitly rather than relying on these.
+_DEFAULT_MODEL = "claude-sonnet-5"
+_DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -165,33 +173,53 @@ No prose before or after the JSON."""
 
 
 class HostedReasoningProvider:
-    """Adapter for a hosted reasoning API (see Settings.anthropic_api_key).
+    """Adapter for a hosted reasoning API (see Settings.anthropic_api_key,
+    Settings.anthropic_model, Settings.anthropic_timeout_seconds,
+    Settings.anthropic_workspace_id).
 
     This is the only class in the codebase that constructs an HTTP request
     to the reasoning provider. Everything above this class in the call
     stack works with ReasoningContext / RawReasoningResult only.
     """
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        model: str = _DEFAULT_MODEL,
+        timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
+        workspace_id: str | None = None,
+    ) -> None:
         self._api_key = api_key
+        self._model = model
+        self._timeout_seconds = timeout_seconds
+        self._workspace_id = workspace_id
 
     def generate_hypotheses(self, context: ReasoningContext) -> RawReasoningResult:
         request_body = {
-            "model": _MODEL,
+            "model": self._model,
             "max_tokens": _MAX_OUTPUT_TOKENS,
             "system": _SYSTEM_PROMPT,
             "messages": [{"role": "user", "content": _render_context(context)}],
         }
+        headers = {
+            "x-api-key": self._api_key,
+            "anthropic-version": _API_VERSION,
+            "content-type": "application/json",
+        }
+        # Some Anthropic API keys are identity-linked to a Console
+        # workspace and require this header to authenticate at all -- only
+        # sent when a workspace id is actually configured, so a standalone
+        # key's request is byte-for-byte unchanged from before this was
+        # added.
+        if self._workspace_id:
+            headers["anthropic-workspace-id"] = self._workspace_id
         try:
             response = httpx.post(
                 _API_URL,
                 json=request_body,
-                headers={
-                    "x-api-key": self._api_key,
-                    "anthropic-version": _API_VERSION,
-                    "content-type": "application/json",
-                },
-                timeout=_TIMEOUT_SECONDS,
+                headers=headers,
+                timeout=self._timeout_seconds,
             )
         except httpx.TimeoutException as exc:
             raise ReasoningProviderError("reasoning provider request timed out") from exc

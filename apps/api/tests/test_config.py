@@ -26,6 +26,56 @@ def test_settings_load_with_required_vars(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.api_key == "test-api-key"
 
 
+def test_anthropic_model_and_timeout_have_sensible_defaults_and_are_optional(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 9: ANTHROPIC_MODEL / ANTHROPIC_TIMEOUT_SECONDS must never be
+    required -- startup (and every existing test) must keep working with
+    neither set, exactly as ANTHROPIC_API_KEY already does."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+    monkeypatch.delenv("ANTHROPIC_TIMEOUT_SECONDS", raising=False)
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.anthropic_model == "claude-sonnet-5"
+    assert settings.anthropic_timeout_seconds == 30.0
+    assert settings.anthropic_api_key is None
+
+
+def test_anthropic_model_and_timeout_are_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-sonnet-5-test-override")
+    monkeypatch.setenv("ANTHROPIC_TIMEOUT_SECONDS", "45")
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.anthropic_model == "claude-sonnet-5-test-override"
+    assert settings.anthropic_timeout_seconds == 45.0
+
+
+def test_anthropic_workspace_id_defaults_to_none_and_is_overridable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Optional, defaulting to None -- a standalone (non-workspace) API
+    key must keep working with this unset, exactly as before it existed."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost:5432/db")
+    monkeypatch.setenv("REDIS_URL", "redis://localhost:6379/0")
+    monkeypatch.setenv("API_KEY", "test-api-key")
+    monkeypatch.delenv("ANTHROPIC_WORKSPACE_ID", raising=False)
+
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.anthropic_workspace_id is None
+
+    monkeypatch.setenv("ANTHROPIC_WORKSPACE_ID", "wrkspc_test_override")
+    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert settings.anthropic_workspace_id == "wrkspc_test_override"
+
+
 def test_env_file_path_is_absolute_and_cwd_independent() -> None:
     """Regression test for a real bug found during Phase 2 verification.
 

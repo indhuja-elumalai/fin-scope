@@ -52,11 +52,25 @@ def get_reasoning_provider() -> ReasoningProvider | None:
     than constructing HostedReasoningProvider with an empty key) is what
     lets app.domain.reasoning.run_reasoning short-circuit to
     status="unavailable" without attempting a doomed HTTP call.
+
+    Model and timeout are read from Settings (Phase 9:
+    ANTHROPIC_MODEL / ANTHROPIC_TIMEOUT_SECONDS, both optional with
+    defaults -- see app.config.Settings) and passed through explicitly
+    rather than relying on HostedReasoningProvider's own constructor
+    defaults, so the configured values are always what a real request
+    actually uses. ANTHROPIC_WORKSPACE_ID is also optional and, when
+    unset, is passed through as None -- HostedReasoningProvider only sends
+    the anthropic-workspace-id header when it is actually configured.
     """
     settings = get_settings()
     if not settings.anthropic_api_key:
         return None
-    return HostedReasoningProvider(api_key=settings.anthropic_api_key)
+    return HostedReasoningProvider(
+        api_key=settings.anthropic_api_key,
+        model=settings.anthropic_model,
+        timeout_seconds=settings.anthropic_timeout_seconds,
+        workspace_id=settings.anthropic_workspace_id,
+    )
 
 
 @router.post("", response_model=InvestigationRead, status_code=status.HTTP_201_CREATED)

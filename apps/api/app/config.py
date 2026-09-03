@@ -45,6 +45,26 @@ class Settings(BaseSettings):
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
     anthropic_api_key: str | None = None
+
+    # Phase 9: the only two provider knobs worth exposing as configuration
+    # (see app.providers.reasoning). Both have sensible defaults matching
+    # the values the provider hardcoded before Phase 9, specifically so
+    # existing startup/tests never need these set. The API URL and API
+    # version stay internal module constants in app.providers.reasoning --
+    # there is no concrete reason yet to make an internal implementation
+    # detail like the wire endpoint configurable.
+    anthropic_model: str = "claude-sonnet-5"
+    anthropic_timeout_seconds: float = 30.0
+
+    # Some Anthropic API keys are identity-linked to a Console workspace
+    # rather than a standalone key, and the Messages API rejects those
+    # without an `anthropic-workspace-id` header identifying which
+    # workspace to bill/authorize against. Optional and defaults to None
+    # so a standalone (non-workspace) key keeps working exactly as before
+    # -- see app.providers.reasoning.HostedReasoningProvider, which only
+    # sends the header at all when this is set.
+    anthropic_workspace_id: str | None = None
+
     sentry_dsn: str | None = None
 
 
