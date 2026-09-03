@@ -22,6 +22,7 @@ from app.domain import decisions as decision_domain
 from app.domain import investigations as investigation_domain
 from app.domain import reasoning as reasoning_domain
 from app.domain import simulation as simulation_domain
+from app.domain import verifications as verification_domain
 from app.providers.reasoning import HostedReasoningProvider, ReasoningProvider
 from app.schemas.action import ActionListResponse, ActionRead
 from app.schemas.decision import DecisionListResponse, DecisionRead
@@ -32,6 +33,7 @@ from app.schemas.investigation import (
 )
 from app.schemas.reasoning import InvestigationReasoningRead
 from app.schemas.simulation import SimulationCreate, SimulationListResponse, SimulationRead
+from app.schemas.verification import VerificationListResponse, VerificationRead
 
 router = APIRouter(
     prefix="/v1/investigations",
@@ -439,6 +441,104 @@ def list_actions(
     )
     return ActionListResponse(
         items=[ActionRead.model_validate(a) for a in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.post(
+    "/{investigation_id}/actions/{action_id}/verification",
+    response_model=VerificationRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_verification(
+    investigation_id: uuid.UUID,
+    action_id: uuid.UUID,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> VerificationRead:
+    """Deterministically verify a single persisted Phase 7 sandbox action
+    against the persisted Phase 5 simulation that justified it.
+
+    Takes no request body -- the action named by `action_id` is the
+    entire context. There is no field anywhere in this request a client
+    could use to submit an expected value, an observed value, or a
+    verification status/result; every one of those is re-derived entirely
+    server-side from the persisted action -> decision -> simulation chain
+    (see app.domain.verifications).
+
+    `action_id` is the idempotency anchor: at most one verification row
+    exists per action. 201 the first time an action is verified, 200 on
+    every subsequent call against the same action_id -- always returning
+    the exact same persisted result, never re-comparing. 404 only when the
+    investigation or the action itself does not exist, or the action
+    belongs to a different investigation. A rejected action (never
+    executed) is still verifiable -- it deterministically persists as
+    INSUFFICIENT_OBSERVATION, never an HTTP error and never a pretended
+    outcome.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found")
+    try:
+        verification, created = verification_domain.run_verification(
+            db, investigation_id=investigation_id, action_id=action_id
+        )
+    except verification_domain.ActionNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Action {exc} not found"
+        ) from exc
+    response.status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+    return VerificationRead.model_validate(verification)
+
+
+@router.get("/{investigation_id}/actions/{action_id}/verification", response_model=VerificationRead)
+def get_verification_for_action(
+    investigation_id: uuid.UUID,
+    action_id: uuid.UUID,
+    db: Session = Depends(get_db),
+) -> VerificationRead:
+    """The outcome verification for a single action, if any. 404 if the
+    investigation or action does not exist (or the action belongs to a
+    different investigation), or if this action has not been verified yet.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found")
+    action = action_domain.get_action(db, investigation_id=investigation_id, action_id=action_id)
+    if action is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Action not found")
+    verification = verification_domain.get_verification_for_action(
+        db, investigation_id=investigation_id, action_id=action_id
+    )
+    if verification is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This action has not been verified yet",
+        )
+    return VerificationRead.model_validate(verification)
+
+
+@router.get("/{investigation_id}/verifications", response_model=VerificationListResponse)
+def list_verifications(
+    investigation_id: uuid.UUID,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> VerificationListResponse:
+    """Append-only outcome-verification history for one investigation,
+    across every action it has ever verified, newest first. 404 if the
+    investigation itself does not exist.
+    """
+    investigation = investigation_domain.get_investigation(db, investigation_id)
+    if investigation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Investigation not found")
+    items, total = verification_domain.list_verifications(
+        db, investigation_id=investigation_id, limit=limit, offset=offset
+    )
+    return VerificationListResponse(
+        items=[VerificationRead.model_validate(v) for v in items],
         total=total,
         limit=limit,
         offset=offset,

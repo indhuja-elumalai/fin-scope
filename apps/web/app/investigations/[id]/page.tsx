@@ -197,6 +197,94 @@ type Action = {
   created_at: string;
 };
 
+// Phase 8 (outcome verification). A Verification is anchored to exactly
+// one persisted Phase 7 action (action_id) -- never "the investigation's
+// latest action" -- and, like Action, is idempotent per action_id rather
+// than append-only. EXPECTED comes from the action's own persisted Phase 5
+// simulation (PROJECTED, never a live recalculation); OBSERVED is derived
+// from the action's own persisted sandbox_result (SANDBOX, never a copy of
+// EXPECTED) -- see app.domain.outcome_verification and
+// app.domain.verifications for the full contract this mirrors.
+type VerificationStatus =
+  | "VERIFIED_SUCCESS"
+  | "PARTIALLY_VERIFIED"
+  | "FAILED"
+  | "INSUFFICIENT_OBSERVATION";
+
+type VerificationCurrencyAmount = {
+  currency: string;
+  amount: string;
+};
+
+// Unavailable shape: {"available": false, "reason": "..."}.
+type ExpectedSnapshot =
+  | {
+      available: true;
+      scenario: string;
+      simulator_version: string;
+      eligible_event_count: number | null;
+      projected_success_count: number | null;
+      projected_failure_count: number | null;
+      projected_exposure_by_currency: VerificationCurrencyAmount[];
+      estimated_recovery_by_currency: VerificationCurrencyAmount[];
+    }
+  | { available: false; reason: string };
+
+type ObservedSnapshot =
+  | {
+      available: true;
+      action_kind: string;
+      observed_success_count: number | null;
+      observed_failure_count: number | null;
+      observed_recovery_by_currency: VerificationCurrencyAmount[];
+      executor_version?: string;
+    }
+  | { available: false; reason: string };
+
+type VerificationCountDimension = {
+  expected: number | null;
+  observed: number | null;
+  match: boolean;
+};
+
+type VerificationRecoveryDimension = {
+  expected: VerificationCurrencyAmount[];
+  observed: VerificationCurrencyAmount[];
+  match: boolean;
+  missing_currencies: string[];
+  unexpected_currencies: string[];
+  amount_mismatches: string[];
+};
+
+type VerificationComparison = {
+  status: VerificationStatus;
+  verifier_version: string;
+  dimensions:
+    | {
+        success_count: VerificationCountDimension;
+        failure_count: VerificationCountDimension;
+        recovery_by_currency: VerificationRecoveryDimension;
+      }
+    | Record<string, never>;
+  matched_dimension_count: number;
+  reasons: string[];
+};
+
+type Verification = {
+  id: string;
+  investigation_id: string;
+  action_id: string;
+  decision_id: string | null;
+  simulation_id: string | null;
+  status: VerificationStatus;
+  verifier_version: string;
+  expected_snapshot: ExpectedSnapshot;
+  observed_snapshot: ObservedSnapshot;
+  comparison: VerificationComparison;
+  evidence: Record<string, unknown>;
+  created_at: string;
+};
+
 const STATUS_COPY: Record<ReasoningStatus, { label: string; tone: "success" | "neutral" | "danger" }> = {
   completed: { label: "Reasoning complete", tone: "success" },
   insufficient_evidence: { label: "Insufficient evidence", tone: "neutral" },
@@ -245,6 +333,25 @@ const ACTION_STATUS_COPY: Record<ActionStatus, { label: string; variant: "allowe
   rejected: { label: "Rejected", variant: "blocked" },
 };
 
+// Phase 8: reuses existing status colors -- allowed/requires_approval/
+// blocked/neutral -- rather than adding four new ones, the same "only add
+// the minimum badge variants required" discipline Phase 7 followed.
+const VERIFICATION_STATUS_COPY: Record<
+  VerificationStatus,
+  { label: string; variant: "allowed" | "requires_approval" | "blocked" | "neutral" }
+> = {
+  VERIFIED_SUCCESS: { label: "Verified success", variant: "allowed" },
+  PARTIALLY_VERIFIED: { label: "Partially verified", variant: "requires_approval" },
+  FAILED: { label: "Failed", variant: "blocked" },
+  INSUFFICIENT_OBSERVATION: { label: "Insufficient observation", variant: "neutral" },
+};
+
+function formatCurrencyAmounts(entries: VerificationCurrencyAmount[]): string {
+  return entries.length > 0
+    ? entries.map((item) => `${item.amount} ${item.currency}`).join(", ")
+    : "—";
+}
+
 export default function InvestigationDetailPage() {
   const params = useParams<{ id: string }>();
   const [investigation, setInvestigation] = useState<Investigation | null>(null);
@@ -279,6 +386,19 @@ export default function InvestigationDetailPage() {
   const [actionForDecisionLoaded, setActionForDecisionLoaded] = useState(false);
   const [actionRunning, setActionRunning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // verificationsHistory is the append-only history across ALL actions for
+  // this investigation (list_verifications). verificationForAction is the
+  // single, idempotent verification tied to the CURRENT latest action
+  // specifically (get_verification_for_action) -- mirrors the
+  // actionsHistory/actionForDecision split above exactly, one level down
+  // the chain (action -> verification, not decision -> action).
+  const [verificationsHistory, setVerificationsHistory] = useState<Verification[]>([]);
+  const [verificationsLoaded, setVerificationsLoaded] = useState(false);
+  const [verificationForAction, setVerificationForAction] = useState<Verification | null>(null);
+  const [verificationForActionLoaded, setVerificationForActionLoaded] = useState(false);
+  const [verificationRunning, setVerificationRunning] = useState(false);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -478,6 +598,83 @@ export default function InvestigationDetailPage() {
     };
   }, [params.id, latestDecisionId]);
 
+  // Loads the append-only outcome-verification history for this
+  // investigation, independent of everything above -- a verification reads
+  // whatever action it is tied to at verification time (see
+  // app.domain.verifications.run_verification).
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadVerificationsHistory() {
+      try {
+        const response = await fetch(`/api/investigations/${params.id}/verifications?limit=20`);
+        if (!response.ok) {
+          throw new Error(`Failed to load outcome verifications (${response.status})`);
+        }
+        const body = (await response.json()) as { items: Verification[] };
+        if (!cancelled) setVerificationsHistory(body.items);
+      } catch (err) {
+        if (!cancelled) {
+          setVerificationError(err instanceof Error ? err.message : "Failed to load outcome verifications.");
+        }
+      } finally {
+        if (!cancelled) setVerificationsLoaded(true);
+      }
+    }
+
+    loadVerificationsHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id]);
+
+  // Loads the single idempotent verification tied to the CURRENT latest
+  // action specifically -- re-fetches whenever a new action is attempted.
+  // A 404 here just means "this action has not been verified yet", a
+  // normal, expected state.
+  const latestActionId = actionForDecision?.id ?? null;
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadVerificationForAction() {
+      if (!latestActionId) {
+        if (!cancelled) {
+          setVerificationForAction(null);
+          setVerificationForActionLoaded(true);
+        }
+        return;
+      }
+
+      if (!cancelled) setVerificationForActionLoaded(false);
+
+      try {
+        const response = await fetch(
+          `/api/investigations/${params.id}/actions/${latestActionId}/verification`
+        );
+        if (response.status === 404) {
+          if (!cancelled) setVerificationForAction(null);
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load outcome verification (${response.status})`);
+        }
+        const body = (await response.json()) as Verification;
+        if (!cancelled) setVerificationForAction(body);
+      } catch (err) {
+        if (!cancelled) {
+          setVerificationError(err instanceof Error ? err.message : "Failed to load outcome verification.");
+        }
+      } finally {
+        if (!cancelled) setVerificationForActionLoaded(true);
+      }
+    }
+
+    loadVerificationForAction();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, latestActionId]);
+
   const runSimulation = useCallback(async () => {
     setSimulationRunning(true);
     setSimulationError(null);
@@ -575,6 +772,39 @@ export default function InvestigationDetailPage() {
       setActionRunning(false);
     }
   }, [params.id, latestDecisionId]);
+
+  // Bodyless POST -- the server derives everything from investigation_id
+  // and action_id in the URL; the client supplies no expected value,
+  // observed value, or verification status (see
+  // app.domain.verifications.run_verification). Idempotent per action_id:
+  // calling this again after a verification already exists just re-fetches
+  // the same persisted result, never re-compares.
+  const runVerification = useCallback(async () => {
+    if (!latestActionId) return;
+    setVerificationRunning(true);
+    setVerificationError(null);
+    try {
+      const response = await fetch(
+        `/api/investigations/${params.id}/actions/${latestActionId}/verification`,
+        { method: "POST" }
+      );
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof body.detail === "string" ? body.detail : "Failed to verify outcome."
+        );
+      }
+      const verification = body as Verification;
+      setVerificationForAction(verification);
+      setVerificationsHistory((prev) =>
+        prev.some((v) => v.id === verification.id) ? prev : [verification, ...prev]
+      );
+    } catch (err) {
+      setVerificationError(err instanceof Error ? err.message : "Failed to verify outcome.");
+    } finally {
+      setVerificationRunning(false);
+    }
+  }, [params.id, latestActionId]);
 
   return (
     <main className="max-w-3xl mx-auto px-6 py-10">
@@ -763,6 +993,21 @@ export default function InvestigationDetailPage() {
             running={actionRunning}
             error={actionError}
             onRun={runAction}
+          />
+
+          {/* 11. Outcome verification (Phase 8) -- anchored ONLY to the
+              latest persisted, executed sandbox action. Never a source of
+              expected/observed/authorization data itself; see
+              runVerification above. */}
+          <OutcomeVerificationSection
+            latestAction={actionForDecision}
+            verificationForAction={verificationForAction}
+            verificationForActionLoaded={verificationForActionLoaded}
+            verificationsHistory={verificationsHistory}
+            verificationsLoaded={verificationsLoaded}
+            running={verificationRunning}
+            error={verificationError}
+            onRun={runVerification}
           />
         </div>
       )}
@@ -1324,7 +1569,8 @@ function SandboxActionSection({
         Only an ALLOWED, persisted Phase 6 decision may trigger a sandbox action. The executor is
         pure and deterministic -- it never contacts a real payment provider and never mutates
         financial event data. It relabels the decision&apos;s own preferred simulation under a
-        scenario-specific action kind. Phase 8 outcome verification is not yet implemented.
+        scenario-specific action kind. Phase 8 outcome verification compares the expected
+        simulation against the independently observed sandbox outcome.
       </p>
 
       <div className="mt-4">
@@ -1474,6 +1720,295 @@ function ActionResult({ action }: { action: Action }) {
 
       <p className="text-xs font-medium text-teal-700">
         Sandbox-only — no real payment provider contacted.
+      </p>
+    </div>
+  );
+}
+
+function OutcomeVerificationSection({
+  latestAction,
+  verificationForAction,
+  verificationForActionLoaded,
+  verificationsHistory,
+  verificationsLoaded,
+  running,
+  error,
+  onRun,
+}: {
+  latestAction: Action | null;
+  verificationForAction: Verification | null;
+  verificationForActionLoaded: boolean;
+  verificationsHistory: Verification[];
+  verificationsLoaded: boolean;
+  running: boolean;
+  error: string | null;
+  onRun: () => void;
+}) {
+  // verificationsHistory already includes verificationForAction
+  // (list_verifications is a superset of get_verification_for_action) --
+  // avoid rendering it twice, mirroring the actionsHistory/actionForDecision
+  // filter in SandboxActionSection above.
+  const history = verificationForAction
+    ? verificationsHistory.filter((v) => v.id !== verificationForAction.id)
+    : verificationsHistory;
+
+  const actionIsVerifiable = !!latestAction && latestAction.status === "executed";
+
+  return (
+    <Card className="p-4">
+      <SectionHeading eyebrow="Deterministic, expected vs. observed" title="Outcome verification">
+        <Badge variant="verification">VERIFICATION</Badge>
+      </SectionHeading>
+      <p className="text-xs text-slate-400 mt-2">
+        Only an executed, persisted Phase 7 sandbox action may be verified. The verifier is pure
+        and deterministic -- it never contacts a real payment provider, never recomputes the
+        simulation, and never mutates the action or its sandbox result. It compares the action&apos;s
+        own EXPECTED (Phase 5 projected) snapshot against its own OBSERVED (Phase 7 sandbox)
+        snapshot, exact match only, per currency.
+      </p>
+
+      <div className="mt-4">
+        {!latestAction && (
+          <EmptyState>
+            No sandbox action has been executed for this investigation yet — run a sandbox action
+            above before its outcome can be verified.
+          </EmptyState>
+        )}
+
+        {latestAction && latestAction.status === "rejected" && (
+          <EmptyState>
+            The latest sandbox action was rejected — a rejected action never produces an
+            observable outcome, so there is nothing to verify.
+          </EmptyState>
+        )}
+
+        {actionIsVerifiable && (
+          <Button variant="secondary" onClick={onRun} disabled={running}>
+            {running
+              ? "Verifying…"
+              : verificationForAction
+                ? "Re-run verification"
+                : "Verify outcome"}
+          </Button>
+        )}
+      </div>
+
+      {error && (
+        <div className="mt-3">
+          <ErrorText>{error}</ErrorText>
+        </div>
+      )}
+
+      {actionIsVerifiable && (
+        <div className="mt-4">
+          {!verificationForActionLoaded && <LoadingRow>Loading outcome verification…</LoadingRow>}
+          {running && (
+            <div className="mt-1">
+              <LoadingRow>Verifying…</LoadingRow>
+            </div>
+          )}
+          {!running && verificationForActionLoaded && verificationForAction && (
+            <VerificationResult verification={verificationForAction} />
+          )}
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+            Verification history
+          </p>
+          {!verificationsLoaded && <LoadingRow>Loading verification history…</LoadingRow>}
+          <ul className="divide-y divide-slate-100">
+            {history.map((verification) => (
+              <li
+                key={verification.id}
+                className="py-2 flex items-center justify-between text-xs gap-2"
+              >
+                <Badge variant={VERIFICATION_STATUS_COPY[verification.status].variant}>
+                  {VERIFICATION_STATUS_COPY[verification.status].label}
+                </Badge>
+                <span className="text-slate-400 font-mono">
+                  {new Date(verification.created_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function VerificationResult({ verification }: { verification: Verification }) {
+  const statusCopy = VERIFICATION_STATUS_COPY[verification.status];
+  const expected = verification.expected_snapshot;
+  const observed = verification.observed_snapshot;
+  const dimensions =
+    "success_count" in verification.comparison.dimensions
+      ? verification.comparison.dimensions
+      : null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <Badge variant="verification">VERIFICATION</Badge>
+        <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+      </div>
+
+      {verification.status === "INSUFFICIENT_OBSERVATION" && (
+        <p className="text-sm text-slate-600">
+          {!expected.available
+            ? expected.reason
+            : !observed.available
+              ? observed.reason
+              : "Insufficient observation to verify this outcome."}
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="border border-purple-200 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <Badge variant="projected">PROJECTED</Badge>
+            <span className="text-xs font-medium text-slate-500">Expected</span>
+          </div>
+          {expected.available ? (
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Eligible events</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {expected.eligible_event_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Projected success</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {expected.projected_success_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Projected failure</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {expected.projected_failure_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Estimated recovery</dt>
+                <dd className="text-slate-900 tabular-nums text-right">
+                  {formatCurrencyAmounts(expected.estimated_recovery_by_currency)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Projected exposure</dt>
+                <dd className="text-slate-900 tabular-nums text-right">
+                  {formatCurrencyAmounts(expected.projected_exposure_by_currency)}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-xs text-slate-500">{expected.reason}</p>
+          )}
+        </div>
+
+        <div className="border border-teal-200 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <Badge variant="sandbox">SANDBOX</Badge>
+            <span className="text-xs font-medium text-slate-500">Observed</span>
+          </div>
+          {observed.available ? (
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Observed success</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {observed.observed_success_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Observed failure</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {observed.observed_failure_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Observed recovery</dt>
+                <dd className="text-slate-900 tabular-nums text-right">
+                  {formatCurrencyAmounts(observed.observed_recovery_by_currency)}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-xs text-slate-500">{observed.reason}</p>
+          )}
+        </div>
+      </div>
+
+      {dimensions && (
+        <div className="border border-slate-200 rounded-lg p-3 space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            Dimension comparison
+          </p>
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Success count</span>
+            <span
+              className={`font-medium tabular-nums ${dimensions.success_count.match ? "text-emerald-700" : "text-red-600"}`}
+            >
+              {dimensions.success_count.expected ?? "—"} vs {dimensions.success_count.observed ?? "—"}
+              {dimensions.success_count.match ? " (match)" : " (mismatch)"}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Failure count</span>
+            <span
+              className={`font-medium tabular-nums ${dimensions.failure_count.match ? "text-emerald-700" : "text-red-600"}`}
+            >
+              {dimensions.failure_count.expected ?? "—"} vs {dimensions.failure_count.observed ?? "—"}
+              {dimensions.failure_count.match ? " (match)" : " (mismatch)"}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Recovery by currency</span>
+            <span
+              className={`font-medium text-right ${dimensions.recovery_by_currency.match ? "text-emerald-700" : "text-red-600"}`}
+            >
+              {dimensions.recovery_by_currency.match ? "match" : "mismatch"}
+            </span>
+          </div>
+          {(dimensions.recovery_by_currency.missing_currencies.length > 0 ||
+            dimensions.recovery_by_currency.unexpected_currencies.length > 0 ||
+            dimensions.recovery_by_currency.amount_mismatches.length > 0) && (
+            <ul className="space-y-1 pt-1">
+              {dimensions.recovery_by_currency.missing_currencies.map((currency) => (
+                <li key={`missing-${currency}`} className="text-xs text-slate-500">
+                  Missing observed amount for {currency}.
+                </li>
+              ))}
+              {dimensions.recovery_by_currency.unexpected_currencies.map((currency) => (
+                <li key={`unexpected-${currency}`} className="text-xs text-slate-500">
+                  Unexpected observed amount for {currency}.
+                </li>
+              ))}
+              {dimensions.recovery_by_currency.amount_mismatches.map((detail) => (
+                <li key={`mismatch-${detail}`} className="text-xs text-slate-500">
+                  {detail}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {verification.comparison.reasons.length > 0 && (
+        <ul className="space-y-1">
+          {verification.comparison.reasons.map((reason) => (
+            <li key={reason} className="text-xs text-slate-500">
+              {reason}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="text-xs font-medium text-fuchsia-700">
+        Deterministic comparison only — no financial data mutated, no external systems contacted.
       </p>
     </div>
   );

@@ -87,6 +87,13 @@ const BADGE_VARIANTS = {
   // ONLY new variant Phase 7 adds -- executed/rejected status reuses the
   // existing allowed/blocked colors above. See app.domain.sandbox_executor.
   sandbox: "bg-teal-50 text-teal-700 border-teal-200",
+  // Phase 8 (outcome verification): the section-level badge distinguishing
+  // "this is the deterministic verification result" from the EXPECTED
+  // (projected, purple) and OBSERVED (sandbox, teal) values it compares.
+  // The ONLY new variant Phase 8 adds -- VERIFIED_SUCCESS/PARTIALLY_VERIFIED/
+  // FAILED/INSUFFICIENT_OBSERVATION reuse allowed/requires_approval/blocked/
+  // neutral respectively. See app.domain.outcome_verification.
+  verification: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
 } as const;
 
 export function Badge({
