@@ -44,6 +44,15 @@ class Settings(BaseSettings):
     razorpay_key_id: str | None = None
     razorpay_key_secret: str | None = None
     razorpay_webhook_secret: str | None = None
+
+    # Phase 10: a second, explicit gate beyond "the configured key happens
+    # to start with rzp_test_" -- app.providers.razorpay.RazorpayClient
+    # refuses to construct unless this is ALSO explicitly true, so a
+    # misconfigured environment fails closed at construction time rather
+    # than proceeding on prefix-matching alone. Defaults to False: Razorpay
+    # integration is inert by default, exactly like anthropic_api_key was
+    # before Phase 9 configured it.
+    razorpay_test_mode_confirmed: bool = False
     anthropic_api_key: str | None = None
 
     # Phase 9: the only two provider knobs worth exposing as configuration
