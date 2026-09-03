@@ -20,37 +20,14 @@ import json
 import uuid
 from unittest.mock import patch
 
-import pytest
 from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.models.audit_log import AuditLog
 from app.models.financial_event import FinancialEvent
-from app.models.merchant import Merchant
 from app.models.razorpay_webhook_event import RazorpayWebhookEvent
 
 WEBHOOK_URL = "/v1/webhooks/razorpay"
-
-
-@pytest.fixture
-def razorpay_test_merchant(razorpay_default_merchant_id):
-    """Ensures a Merchant row exists with exactly
-    conftest.TEST_RAZORPAY_DEFAULT_MERCHANT_ID as its id. Not created
-    through the /v1/merchants API -- Merchant.id is server-generated
-    (default=uuid.uuid4), so the only way to give a test merchant this
-    exact, Settings-matching id is a direct insert. Idempotent (checks
-    for an existing row first) so running many tests in one session
-    never collides on a duplicate insert."""
-    merchant_id = uuid.UUID(razorpay_default_merchant_id)
-    db = SessionLocal()
-    try:
-        existing = db.get(Merchant, merchant_id)
-        if existing is None:
-            db.add(Merchant(id=merchant_id, name="Razorpay Webhook Test Merchant"))
-            db.commit()
-    finally:
-        db.close()
-    return merchant_id
 
 
 def _sign(body: bytes, secret: str) -> str:

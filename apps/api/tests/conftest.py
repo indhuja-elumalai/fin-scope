@@ -1,4 +1,5 @@
 import os
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,8 +21,8 @@ TEST_API_KEY = "test-api-key"
 # an ambient value already exported in the developer's shell must never
 # silently win. TEST_RAZORPAY_DEFAULT_MERCHANT_ID is not created via the
 # API (Merchant.id is server-generated, not client-settable) -- see the
-# razorpay_test_merchant fixture in test_razorpay_webhooks_router.py,
-# which inserts a Merchant row with exactly this id directly.
+# razorpay_test_merchant fixture below, which inserts a Merchant row with
+# exactly this id directly.
 TEST_RAZORPAY_WEBHOOK_SECRET = "whsec_test_fixture_secret"
 TEST_RAZORPAY_DEFAULT_MERCHANT_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -33,7 +34,9 @@ os.environ["API_KEY"] = TEST_API_KEY
 os.environ["RAZORPAY_WEBHOOK_SECRET"] = TEST_RAZORPAY_WEBHOOK_SECRET
 os.environ["RAZORPAY_DEFAULT_MERCHANT_ID"] = TEST_RAZORPAY_DEFAULT_MERCHANT_ID
 
-from app.main import app  # noqa: E402  -- env vars must be set before import
+from app.db import SessionLocal  # noqa: E402  -- env vars must be set before import
+from app.main import app  # noqa: E402  -- see note above
+from app.models.merchant import Merchant  # noqa: E402  -- see note above
 
 
 @pytest.fixture
@@ -54,3 +57,28 @@ def razorpay_webhook_secret() -> str:
 @pytest.fixture
 def razorpay_default_merchant_id() -> str:
     return TEST_RAZORPAY_DEFAULT_MERCHANT_ID
+
+
+@pytest.fixture
+def razorpay_test_merchant(razorpay_default_merchant_id):
+    """Ensures a Merchant row exists with exactly
+    conftest.TEST_RAZORPAY_DEFAULT_MERCHANT_ID as its id. Not created
+    through the /v1/merchants API -- Merchant.id is server-generated
+    (default=uuid.uuid4), so the only way to give a test merchant this
+    exact, Settings-matching id is a direct insert. Idempotent (checks
+    for an existing row first) so running many tests in one session
+    never collides on a duplicate insert.
+
+    Shared across every Razorpay-related test module (webhooks, actions,
+    verification) -- lives here rather than in one test file so no test
+    file needs to import-and-reexport it from a sibling module."""
+    merchant_id = uuid.UUID(razorpay_default_merchant_id)
+    db = SessionLocal()
+    try:
+        existing = db.get(Merchant, merchant_id)
+        if existing is None:
+            db.add(Merchant(id=merchant_id, name="Razorpay Webhook Test Merchant"))
+            db.commit()
+    finally:
+        db.close()
+    return merchant_id

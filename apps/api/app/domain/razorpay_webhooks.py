@@ -65,7 +65,11 @@ _EVENT_TYPE_MAP = {
 assert _EVENT_TYPE_MAP.keys() == SUPPORTED_EVENT_TYPES
 assert set(_EVENT_TYPE_MAP.values()) <= event_domain.KNOWN_EVENT_TYPES
 
-_WEBHOOK_SOURCE = "razorpay_webhook"
+WEBHOOK_SOURCE = "razorpay_webhook"
+# Milestone 3 (Part 5) reuses this exact constant to locate the same
+# webhook-ingested FinancialEvent rows for real-observation linkage --
+# see app.domain.razorpay_verification. Renamed from a private name
+# to public for that reuse; no behavior change.
 
 # Outcome labels persisted on RazorpayWebhookEvent.outcome -- see that
 # model's docstring for why only these three (all terminal/deterministic)
@@ -361,7 +365,7 @@ def process_webhook(
         db,
         merchant_id=merchant_id,
         event_type=mapped.event_type,
-        source=_WEBHOOK_SOURCE,
+        source=WEBHOOK_SOURCE,
         external_reference=mapped.external_reference,
         amount=mapped.amount,
         currency=mapped.currency,
