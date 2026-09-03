@@ -7,6 +7,7 @@ from app.models.investigation_outcome_verification import InvestigationOutcomeVe
 from app.models.investigation_reasoning import InvestigationReasoning
 from app.models.investigation_simulation import InvestigationSimulation
 from app.models.merchant import Merchant
+from app.models.razorpay_webhook_event import RazorpayWebhookEvent
 
 __all__ = [
     "AuditLog",
@@ -18,4 +19,5 @@ __all__ = [
     "InvestigationReasoning",
     "InvestigationSimulation",
     "Merchant",
+    "RazorpayWebhookEvent",
 ]

@@ -14,11 +14,24 @@ from fastapi.testclient import TestClient
 # regardless of what else is exported in the shell.
 TEST_API_KEY = "test-api-key"
 
+# Phase 10, Milestone 2: forced (not setdefault), same rationale as
+# API_KEY above -- tests/test_razorpay_webhooks_router.py signs requests
+# with this exact secret and asserts against this exact merchant id, so
+# an ambient value already exported in the developer's shell must never
+# silently win. TEST_RAZORPAY_DEFAULT_MERCHANT_ID is not created via the
+# API (Merchant.id is server-generated, not client-settable) -- see the
+# razorpay_test_merchant fixture in test_razorpay_webhooks_router.py,
+# which inserts a Merchant row with exactly this id directly.
+TEST_RAZORPAY_WEBHOOK_SECRET = "whsec_test_fixture_secret"
+TEST_RAZORPAY_DEFAULT_MERCHANT_ID = "11111111-1111-1111-1111-111111111111"
+
 os.environ.setdefault(
     "DATABASE_URL", "postgresql+psycopg://finscope:finscope@localhost:5432/finscope"
 )
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ["API_KEY"] = TEST_API_KEY
+os.environ["RAZORPAY_WEBHOOK_SECRET"] = TEST_RAZORPAY_WEBHOOK_SECRET
+os.environ["RAZORPAY_DEFAULT_MERCHANT_ID"] = TEST_RAZORPAY_DEFAULT_MERCHANT_ID
 
 from app.main import app  # noqa: E402  -- env vars must be set before import
 
@@ -31,3 +44,13 @@ def client() -> TestClient:
 @pytest.fixture
 def api_key() -> str:
     return TEST_API_KEY
+
+
+@pytest.fixture
+def razorpay_webhook_secret() -> str:
+    return TEST_RAZORPAY_WEBHOOK_SECRET
+
+
+@pytest.fixture
+def razorpay_default_merchant_id() -> str:
+    return TEST_RAZORPAY_DEFAULT_MERCHANT_ID

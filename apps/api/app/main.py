@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import events, health, investigations, merchants, ping
+from app.routers import events, health, investigations, merchants, ping, razorpay_webhooks
 
 app = FastAPI(title="FIN-SCOPE API", version="0.1.0")
 
@@ -34,3 +34,4 @@ app.include_router(ping.router)
 app.include_router(merchants.router)
 app.include_router(events.router)
 app.include_router(investigations.router)
+app.include_router(razorpay_webhooks.router)
