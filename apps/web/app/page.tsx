@@ -2,7 +2,7 @@
 
 // Command center: the investigation workflow's home screen. Every number
 // on this page comes from an existing backend endpoint (merchants list,
-// investigations list + its own `total`, and /health) -- nothing here is
+// investigations list + its own `total`, and /api/health) -- nothing here is
 // a fabricated metric or a client-side estimate presented as fact.
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -33,8 +33,6 @@ type Investigation = {
 
 type InvestigationListResponse = { items: Investigation[]; total: number };
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
 export default function CommandCenterPage() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
@@ -49,14 +47,21 @@ export default function CommandCenterPage() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API_BASE_URL}/health`, { cache: "no-store" })
-      .then((response) => response.json() as Promise<HealthResponse>)
+
+    fetch("/api/health", { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Health check failed (${response.status})`);
+        }
+        return response.json() as Promise<HealthResponse>;
+      })
       .then((body) => {
         if (!cancelled) setHealth(body);
       })
       .catch(() => {
         if (!cancelled) setHealthError("Could not reach the FIN-SCOPE API.");
       });
+
     return () => {
       cancelled = true;
     };
@@ -64,6 +69,7 @@ export default function CommandCenterPage() {
 
   useEffect(() => {
     let cancelled = false;
+
     fetch("/api/merchants?limit=200")
       .then((response) => {
         if (!response.ok) throw new Error(`Failed to load merchants (${response.status})`);
@@ -73,9 +79,13 @@ export default function CommandCenterPage() {
         if (!cancelled) setMerchants(body);
       })
       .catch((err) => {
-        if (!cancelled)
-          setMerchantsError(err instanceof Error ? err.message : "Failed to load merchants.");
+        if (!cancelled) {
+          setMerchantsError(
+            err instanceof Error ? err.message : "Failed to load merchants."
+          );
+        }
       });
+
     return () => {
       cancelled = true;
     };
@@ -91,15 +101,19 @@ export default function CommandCenterPage() {
           fetch("/api/investigations?incident_detected=true&limit=1"),
           fetch("/api/investigations?limit=6"),
         ]);
+
         if (!totalRes.ok || !incidentRes.ok || !recentRes.ok) {
           throw new Error("Failed to load investigation summary.");
         }
+
         const [totalBody, incidentBody, recentBody] = (await Promise.all([
           totalRes.json(),
           incidentRes.json(),
           recentRes.json(),
         ])) as InvestigationListResponse[];
+
         if (cancelled) return;
+
         setInvestigationsTotal(totalBody.total);
         setIncidentsTotal(incidentBody.total);
         setRecent(recentBody.items);
@@ -113,12 +127,14 @@ export default function CommandCenterPage() {
     }
 
     load();
+
     return () => {
       cancelled = true;
     };
   }, []);
 
   const merchantNames = new Map((merchants ?? []).map((m) => [m.id, m.name]));
+
   const merchantCountLabel =
     merchants === null
       ? "—"
@@ -126,7 +142,8 @@ export default function CommandCenterPage() {
         ? "200+"
         : String(merchants.length);
 
-  const systemTone = !health ? "neutral" : health.status === "ok" ? "success" : "danger";
+  const systemTone =
+    !health ? "neutral" : health.status === "ok" ? "success" : "danger";
 
   return (
     <main className="max-w-6xl mx-auto px-6 py-10">
@@ -142,17 +159,20 @@ export default function CommandCenterPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-8">
         <StatTile label="Merchants" value={merchantCountLabel} hint="Onboarded merchants" />
+
         <StatTile
           label="Investigations"
           value={investigationsTotal ?? "—"}
           hint="All time, this environment"
         />
+
         <StatTile
           label="Incidents detected"
           value={incidentsTotal ?? "—"}
           tone={incidentsTotal && incidentsTotal > 0 ? "danger" : "neutral"}
           hint="Deterministic FIND threshold met"
         />
+
         <StatTile
           label="System"
           value={health ? health.status : healthError ? "unreachable" : "…"}
@@ -173,7 +193,10 @@ export default function CommandCenterPage() {
         <div className="lg:col-span-2">
           <Card className="p-4">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-slate-900">Recent investigations</h2>
+              <h2 className="text-sm font-semibold text-slate-900">
+                Recent investigations
+              </h2>
+
               <Link
                 href="/investigations"
                 className="text-xs text-blue-600 hover:underline font-medium"
@@ -185,12 +208,14 @@ export default function CommandCenterPage() {
             {recent === null && !investigationsError && (
               <LoadingRow>Loading recent investigations…</LoadingRow>
             )}
+
             {recent !== null && recent.length === 0 && (
               <p className="text-sm text-slate-500 py-6 text-center">
-                No investigations yet — merchants and financial events are onboarded before an
-                investigation can run.
+                No investigations yet — merchants and financial events are onboarded
+                before an investigation can run.
               </p>
             )}
+
             {recent !== null && recent.length > 0 && (
               <ul className="divide-y divide-slate-100">
                 {recent.map((inv) => (
@@ -203,16 +228,19 @@ export default function CommandCenterPage() {
                         <Badge variant={inv.incident_detected ? "danger" : "neutral"}>
                           {inv.incident_detected ? "Incident" : "No incident"}
                         </Badge>
+
                         <div className="min-w-0">
                           <div className="text-sm text-slate-800 truncate">
                             {merchantNames.get(inv.merchant_id) ?? inv.merchant_id.slice(0, 8)}
                           </div>
+
                           <div className="text-xs text-slate-400 truncate">
                             {inv.evidence_event_count} events ·{" "}
                             {new Date(inv.created_at).toLocaleString()}
                           </div>
                         </div>
                       </div>
+
                       <span className="text-slate-400 text-xs shrink-0">
                         {inv.dominant_signal_event_type ?? "—"}
                       </span>
@@ -226,10 +254,14 @@ export default function CommandCenterPage() {
 
         <div className="space-y-4">
           <Card className="p-4">
-            <h2 className="text-sm font-semibold text-slate-900 mb-1">Workflow</h2>
+            <h2 className="text-sm font-semibold text-slate-900 mb-1">
+              Workflow
+            </h2>
+
             <p className="text-xs text-slate-500 mb-3">
               Every investigation moves through the same deterministic-and-AI pipeline.
             </p>
+
             <ol className="space-y-1.5 text-xs text-slate-600">
               {[
                 "FIND — rule-based incident detection",
@@ -242,7 +274,9 @@ export default function CommandCenterPage() {
                 "VERIFY — expected vs. observed outcome",
               ].map((step, i) => (
                 <li key={step} className="flex gap-2">
-                  <span className="text-slate-300 tabular-nums w-3 shrink-0">{i + 1}</span>
+                  <span className="text-slate-300 tabular-nums w-3 shrink-0">
+                    {i + 1}
+                  </span>
                   <span>{step}</span>
                 </li>
               ))}
@@ -250,7 +284,10 @@ export default function CommandCenterPage() {
           </Card>
 
           <Card className="p-4">
-            <h2 className="text-sm font-semibold text-slate-900 mb-3">Quick links</h2>
+            <h2 className="text-sm font-semibold text-slate-900 mb-3">
+              Quick links
+            </h2>
+
             <div className="flex flex-col gap-2">
               <Link
                 href="/merchants"
@@ -258,12 +295,14 @@ export default function CommandCenterPage() {
               >
                 Manage merchants →
               </Link>
+
               <Link
                 href="/events"
                 className="text-sm text-slate-700 hover:text-blue-600 transition-colors"
               >
                 Ingest / inspect financial events →
               </Link>
+
               <Link
                 href="/investigations"
                 className="text-sm text-slate-700 hover:text-blue-600 transition-colors"
