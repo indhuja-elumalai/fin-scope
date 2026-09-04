@@ -23,17 +23,23 @@ approved actions, and verifies the outcome.
 FIND -> INVESTIGATE -> ROOT CAUSE -> IMPACT -> SIMULATE -> DECIDE -> POLICY -> ACT -> VERIFY -> LEARN
 ```
 
-This repository currently implements the foundation, the deterministic
-event-ingestion layer, a deterministic FIND -> dominant-signal -> IMPACT
-slice (rule-based incident detection, a frequency-based "dominant signal"
-heuristic, and a currency-safe impact estimate -- not causal root-causing,
-and no AI/LLM call anywhere in this slice), a reasoning layer (Phase 4)
-that proposes ranked, evidence-grounded hypotheses over that deterministic
-evidence -- plausible explanations, never a confirmed ROOT CAUSE -- and, as
-of Phase 5, a deterministic (again, no AI/LLM call) SIMULATE step that
-projects a scenario's consequence against an investigation's own persisted
-evidence. All of this is described in section 12. Causal ROOT CAUSE
-reasoning, DECIDE, POLICY, ACT, VERIFY, and LEARN have not started.
+This repository currently implements the full FIND -> INVESTIGATE ->
+ROOT CAUSE (reasoning) -> IMPACT -> SIMULATE -> DECIDE -> POLICY -> ACT ->
+VERIFY vertical slice described as Phases 1-8 below, plus two later
+integration milestones layered on top of it: Phase 9 (wiring the real,
+hosted Claude API behind Phase 4's existing reasoning provider boundary,
+plus an offline reasoning-evaluation module) and Phase 10 (a real
+Razorpay TEST-mode integration -- client foundation, webhook ingestion,
+and a policy-gated TEST action + outcome verification; see section 9).
+Every step from FIND through VERIFY is either a deterministic, code-level
+rule or a schema-validated AI proposal that a deterministic policy engine
+must authorize before anything executes -- see section 12 for exactly
+what each phase delivered and how it was verified. Two things this
+repository does NOT implement: causal ROOT CAUSE detection (Phase 4's
+reasoning layer proposes plausible, evidence-grounded hypotheses, never a
+confirmed cause -- see section 4) and LEARN (there is no feedback loop
+that adjusts detection thresholds, simulation assumptions, or policy
+limits from past outcomes).
 
 ## 4. Why AI is used
 
@@ -90,36 +96,51 @@ Stats      reasoning  consequence
   |           |      simulator
   +-----+-----+-----+
         |
-  Decision Engine        (not yet implemented)
+  Decision Engine (Phase 6)
         |
-  Policy Engine (deterministic)   (not yet implemented)
+  Policy Engine (deterministic, Phase 6)
         |
-  Execution Layer        (not yet implemented)
+  Execution Layer: Bounded Sandbox (Phase 7) or Razorpay TEST Action (Phase 10)
         |
-  Razorpay API            (not yet implemented)
-        |
-  Verification            (not yet implemented)
+  Verification: Sandbox Outcome (Phase 8) or Razorpay TEST Outcome (Phase 10)
         |
   Audit Log
 ```
 
 Phase 1 establishes the backend/frontend skeleton, the database (`merchants`,
-`audit_log`), API-key auth, and health checks that everything above will be
+`audit_log`), API-key auth, and health checks that everything above is
 built on. Phase 2 adds the `financial_events` table and the ingestion/
 retrieval API that feeds the Event Engine. Phase 3 adds a deterministic
 FIND rule (a concerning-event count threshold within a rolling window), a
 deterministic "dominant signal" frequency heuristic, and a currency-safe
 impact calculation, persisted as `investigations` -- this is rule-based
-detection, not the AI-driven root-cause reasoning shown in the
-architecture diagram above; that remains a later, unimplemented phase.
-Phase 4 adds evidence-grounded AI reasoning (hypotheses over Phase 3's
-evidence, never a replacement for it) as `investigation_reasoning`. Phase 5
-adds the Simulation box: a deterministic (non-AI) scenario simulator that
-projects the consequence of a small, explicit scenario catalog against an
-investigation's own persisted evidence, as `investigation_simulations` --
-the Decision Engine, Policy Engine, Execution Layer, and Razorpay
-integration below it remain unimplemented, and Phase 5 does not select,
-authorize, or execute any of the scenarios it simulates.
+detection, not the causal root-cause reasoning the diagram's "AI-driven
+reasoning" box might suggest; see section 4 for exactly what Phase 4's
+reasoning layer does and does not claim. Phase 4 adds evidence-grounded AI
+reasoning (hypotheses over Phase 3's evidence, never a replacement for it)
+as `investigation_reasoning`. Phase 5 adds the Simulation box: a
+deterministic (non-AI) scenario simulator that projects the consequence of
+a small, explicit scenario catalog against an investigation's own
+persisted evidence, as `investigation_simulations`. Phase 6 adds the
+Decision Engine and the deterministic Policy Engine: comparing each
+scenario's Phase 5 projection and picking one preferred candidate is a
+pure, non-AI comparison (`app.domain.decision_evaluation`), and
+authorizing it -- ALLOWED / REQUIRES_HUMAN_APPROVAL / BLOCKED -- is a
+separate, pure, versioned policy function (`app.domain.policy`) that never
+re-ranks or substitutes a different candidate. Phase 7 adds the Execution
+Layer's sandbox path: a bounded, policy-gated action that never contacts a
+real payment provider. Phase 8 adds Outcome Verification for that sandbox
+path: a deterministic EXPECTED-vs-OBSERVED comparison against Phase 5's
+own projection. Phase 10 (section 9) adds a second Execution Layer path
+alongside Phase 7's sandbox path: a Razorpay TEST-mode client, TEST-mode-
+only by construction, gated on the exact same `ALLOWED` decision Phase 7
+requires, plus its own outcome verification against a real (TEST-mode)
+webhook-observed event -- never a production payment provider, and never
+reachable by the AI reasoning layer, which has no import path to either
+execution branch. The frontend currently exposes the sandbox path (Phases
+6-8) end to end; the Razorpay TEST path (Phase 10) is implemented and
+tested at the API level but does not yet have a corresponding frontend
+section -- see section 9.
 
 ## 7. Technology stack
 
@@ -129,27 +150,110 @@ authorize, or execute any of the scenarios it simulates.
 - Cache/queue: Redis (local Docker for development; managed Redis later)
 - AI: a hosted reasoning model, integrated in Phase 4 behind a provider
   adapter (`app/providers/reasoning.py`) for investigation reasoning only
-- Payments: Razorpay Test Mode (not yet integrated)
+- Payments: Razorpay Test Mode, integrated in Phase 10 behind a provider
+  adapter (`app/providers/razorpay.py`) for TEST-mode order creation, plus
+  webhook ingestion and outcome verification (see section 9) -- API-level
+  only, no frontend UI yet
 
 ## 8. Sandbox
 
-Not yet implemented. Will provide a controlled synthetic event generator and
-incident injector used as the primary benchmark/stress-test environment.
+Not yet implemented, and distinct from Phase 7's "Bounded Sandbox Action"
+and Phase 10's Razorpay TEST execution path (both of which are
+implemented -- see sections 6, 9, and 12). This section refers to a
+separate, not-yet-built synthetic event generator and incident injector
+intended as a controlled benchmark/stress-test environment for exercising
+the full FIND -> ... -> VERIFY loop end to end with generated data, rather
+than manually-ingested test events. No such generator exists in this
+repository yet.
 
 ## 9. Razorpay integration
 
-Not yet implemented. `.env.example` reserves `RAZORPAY_KEY_ID`,
-`RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET` for the adapter that
-will be built in its designated phase.
+Implemented as Phase 10, Milestones 1-3 (see section 12 for full detail);
+Milestone 4 is not yet done.
+
+- **Milestone 1 -- TEST-mode client foundation** (`app/providers/razorpay.py`):
+  the one module allowed to know Razorpay's HTTP API shape. Refuses to
+  construct at all unless the configured key has Razorpay's own
+  `rzp_test_` prefix AND `RAZORPAY_TEST_MODE_CONFIRMED=true` is explicitly
+  set -- either condition alone is not enough. No live call is made by
+  this module's own tests (`httpx.post` is mocked throughout).
+- **Milestone 2 -- webhook ingestion** (`app/domain/razorpay_webhooks.py`,
+  `POST /v1/webhooks/razorpay`): verifies the HMAC signature against the
+  raw request body before anything else happens; only a small, explicit
+  set of supported event types is ever processed; ingestion is delegated
+  entirely to the existing `app.domain.events.ingest_event` (no parallel
+  ingestion path); every accepted webhook is attributed to the one
+  merchant configured via `RAZORPAY_DEFAULT_MERCHANT_ID` (Razorpay
+  payloads identify a Razorpay account, not a FIN-SCOPE merchant, and
+  there is no multi-merchant mapping yet); an already-processed event is
+  acknowledged idempotently via a dedicated webhook ledger table rather
+  than reprocessed.
+- **Milestone 3 -- real Razorpay TEST action + outcome verification**
+  (`app/domain/razorpay_action.py`, `app/domain/razorpay_verification.py`,
+  `POST /v1/investigations/{id}/decisions/{decision_id}/razorpay-action`,
+  `.../razorpay-verifications`): authorization is re-derived from the same
+  persisted, immutable `InvestigationDecision` Phase 7 uses -- only a
+  `completed` decision with `policy_decision == "ALLOWED"` ever reaches
+  the Razorpay client; `REQUIRES_HUMAN_APPROVAL`/`BLOCKED` decisions are
+  rejected before this module ever touches `app.providers.razorpay`. This
+  module creates a NEW, independent Razorpay TEST Order -- it never claims
+  to retry or resume a specific existing failed payment (Razorpay's Orders
+  API has no such mechanism), and every persisted row/audit entry
+  describes the outcome that way. Because the call to Razorpay is real
+  (even in TEST mode), idempotency is enforced by inserting and committing
+  a `pending` row under a `UNIQUE(decision_id)` constraint *before*
+  calling Razorpay, so a concurrent duplicate request loses the insert
+  race and never places a second Order. Outcome verification reuses
+  Phase 8's pure comparison function unmodified for the EXPECTED side, but
+  OBSERVED is fundamentally different from Phase 8's: it is never derived
+  from Phase 5's simulation, from a client-submitted value, or from a copy
+  of EXPECTED -- it comes only from a real `FinancialEvent` that
+  Milestone 2's webhook pipeline actually ingested for that Order; if no
+  such webhook has arrived yet, the result is `{"available": false, ...}`,
+  never fabricated.
+
+The reasoning layer (Phase 4/9) has no import path to any of the three
+milestones above -- verified by static inspection, the same discipline
+Phase 7's sandbox executor already applies.
+
+**Not yet done:** Milestone 4 -- an actual live network call to Razorpay's
+TEST API (as opposed to the mocked-`httpx` tests above) -- is deliberately
+gated behind explicit, separate operator approval and has not been run.
+There is also no frontend UI for the Razorpay TEST action/verification
+endpoints yet (`apps/web/app/api/*` has no Razorpay proxy routes, and
+`apps/web/app/investigations/[id]/page.tsx` has no Razorpay section) --
+today these endpoints are exercised via direct API calls (curl/HTTP
+client with the shared API key), not through the web UI. `.env.example`
+documents `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`,
+`RAZORPAY_WEBHOOK_SECRET`, `RAZORPAY_TEST_MODE_CONFIRMED`, and
+`RAZORPAY_DEFAULT_MERCHANT_ID`, all optional -- the backend runs fine with
+none of them set; the Razorpay endpoints simply fail closed.
 
 ## 10. Evaluation methodology
 
-Not yet implemented. Will compare FIN-SCOPE's output against golden answers
-for a benchmark set of synthetic scenarios.
+Partially implemented. Phase 9 added `app/eval/reasoning_eval.py`: a
+small, deterministic, offline evaluation module that scores one
+already-produced Phase 4/9 reasoning result against a human-authored
+`EvaluationCase` (an expected status and, where relevant, known-valid
+evidence ids) across nine measurable properties (evidence grounding,
+unsupported-claim handling, hypothesis structure, confidence handling,
+contradiction handling, insufficient-evidence handling, the deterministic-
+reasoning boundary, failure behavior, and uncertainty articulation) plus a
+top-level expected-status match. It is never called during a normal
+`/reason` request and makes no provider call itself -- see section 12
+(Phase 9). This is a real, exercised evaluation mechanism for reasoning
+quality specifically; it is not a benchmark suite comparing FIN-SCOPE's
+full FIND -> ... -> VERIFY output against golden answers across a
+scenario corpus -- no such benchmark/golden-answer set exists in this
+repository yet, and section 8's synthetic incident generator (the natural
+source of such a corpus) has not been built.
 
 ## 11. Metrics
 
-Not yet implemented.
+Not yet implemented as a dedicated metrics module or dashboard. Per-phase
+test counts and verification outcomes are documented in section 14 as
+each phase was built and verified; there is no aggregated, continuously-
+updated metrics view over those results.
 
 ## 12. Development roadmap
 
@@ -163,7 +267,8 @@ Not yet implemented.
 | 6 | Decision Evaluation + Policy | Deterministic scenario/decision selection under an explicit, non-AI policy boundary | ✅ COMPLETE |
 | 7 | Bounded Sandbox Action | Policy-authorized action execution, sandboxed -- AI still never directly controls money | ✅ COMPLETE |
 | 8 | Outcome Verification | Verify an executed action's actual outcome against what Phase 5 projected | ✅ COMPLETE |
-| 9 | Real Claude Reasoning + AI Evaluation | Wire the real Anthropic API through the existing Phase 4 provider boundary, plus a controlled offline evaluation module | 🔶 IMPLEMENTED (offline-verified; live call pending owner approval) |
+| 9 | Real Claude Reasoning + AI Evaluation | Wire the real Anthropic API through the existing Phase 4 provider boundary, plus a controlled offline evaluation module | ✅ COMPLETE |
+| 10 | Razorpay TEST Integration | Real Razorpay TEST-mode client (M1), webhook ingestion (M2), policy-gated TEST action + outcome verification (M3) | 🔶 MILESTONES 1-3 COMPLETE (Milestone 4 live-call pending owner approval) |
 
 ### Phase 1 — Foundation
 
@@ -508,6 +613,102 @@ browser walkthrough of the new simulation section was confirmed.
 
 Status: COMPLETE
 
+### Phase 6 -- Decision Evaluation + Policy
+
+Goal: given an investigation's own persisted Phase 5 simulations (one per
+scenario), deterministically pick exactly one preferred candidate and
+decide -- without any AI/LLM involvement -- whether the system is allowed
+to act on it autonomously: ALLOWED / REQUIRES_HUMAN_APPROVAL / BLOCKED.
+Phase 6 never executes anything; it ends at "we may/may not act", handing
+off a policy-authorized (or not) decision to Phase 7/10's execution
+layer. The vertical slice becomes:
+
+    INVESTIGATION -> REASONING -> SIMULATION -> DECISION -> POLICY
+
+**Two structurally separate questions, two pure functions:**
+`app.domain.decision_evaluation.evaluate_candidates` answers "which
+candidate is preferable" and never authorizes anything; `app.domain.policy
+.evaluate_policy` answers "are we allowed to choose that candidate" and
+never re-ranks or substitutes a different one -- a preferred candidate can
+be simultaneously BLOCKED, and Phase 6 persists that outcome rather than
+silently swapping in a runner-up. Both functions are pure Python: no
+database, no LLM call, no network dependency, no random behavior; the
+same input always produces the same output.
+
+**Candidate discovery (MVP, no client override):** the latest
+`status="completed"` simulation per distinct scenario for the
+investigation, auto-discovered server-side. The decision-creation endpoint
+accepts no request body at all -- there is no field a client could use to
+submit an evaluation result or a policy decision.
+
+**Evaluation (`evaluate_candidates`), three ordered tie-break stages,
+stopping at the first that produces a single winner:** (1) fewest
+projected failed events remaining (`failed_event_count_delta`, currency-
+free, checked first); (2) highest projected recovery, but only when every
+still-tied candidate's nonzero recovery is expressed in a single common
+currency -- never scalarized or converted across currencies; (3) a fixed,
+documented scenario priority (`DO_NOTHING` first) -- never UUID order, row
+order, or insertion timing.
+
+**Policy (`evaluate_policy`), most to least restrictive:** BLOCKED
+(candidate not `completed`, or its scenario is in an explicitly configured
+prohibited set -- empty by default) is never offered as
+REQUIRES_HUMAN_APPROVAL, since a human approving would not make a
+structurally invalid candidate acceptable. REQUIRES_HUMAN_APPROVAL
+collects every applicable reason rather than stopping at the first: any
+event with an unknown amount in the projected exposure (never guessed as
+zero), the intervention's eligible-event-count scope exceeding a
+configured limit, or any currency's projected exposure exceeding its
+configured autonomous threshold *or having no configured threshold at
+all* -- an unconfigured currency is never treated as autonomously safe.
+ALLOWED only when every configured condition passes. Thresholds live in
+one versioned, centralized `PolicyConfig`
+(`autonomous_exposure_threshold_by_currency`,
+`max_autonomous_eligible_event_count`, `prohibited_scenarios`) --
+explicitly documented as demonstration values, not statistically
+calibrated production safety limits, the same caveat Phase 5's
+`success_rate`/`scope_fraction` assumptions already carry.
+
+Delivered:
+- `app/domain/decision_evaluation.py` and `app/domain/policy.py`: the two
+  pure functions above.
+- `app/domain/decisions.py`: orchestration -- the only Phase 6 module that
+  touches the database. Loads the investigation's completed simulations,
+  reduces each to a `CandidateInput`, calls evaluation then policy in
+  order, and persists exactly one new `InvestigationDecision` row. Two
+  short-circuit outcomes are persisted (never raised as errors): no
+  incident detected (`insufficient_evidence`) and no completed simulation
+  yet (`no_eligible_scenario`).
+- `investigation_decisions` table (Alembic `0006`), append-only like
+  `investigation_reasoning` and `investigation_simulations` -- rerunning
+  after new simulations exist produces Decision #2, #3, ..., never an
+  overwrite.
+- `POST /v1/investigations/{id}/decisions` (no request body, `201` on
+  success), `GET .../decisions` (append-only history, newest first), and
+  `GET .../decisions/{decision_id}` (404 if it belongs to a different
+  investigation) -- all API-key protected.
+- Every decision writes exactly one existing-schema `audit_log` row
+  (`investigation_decision_completed`, actor `system`, recording status
+  and `policy_decision` only).
+- `apps/web/investigations/[id]`: a "Decision evaluation" section showing
+  the evaluated candidates, the preferred pick and why, the policy
+  decision badge (Allowed / Requires approval / Blocked), and its reasons;
+  a small append-only decision history follows.
+
+Verification: `scripts/verify-phase-6.sh` exists in the repository
+(Postgres/Redis via Docker Compose, the full Phase 1-6 backend suite,
+frontend lint/build, security/hygiene checks). This documentation pass did
+not have a working Python environment to execute it (the same package-
+registry-access constraint documented throughout this section);
+`tests/test_decision_evaluation.py` (13 test functions), `tests/
+test_policy.py` (15 test functions), and `tests/test_decisions.py` (19
+test functions) were confirmed present in the repository, but were not
+re-run as part of this documentation pass -- run
+`bash scripts/verify-phase-6.sh` to reproduce the project owner's own
+verification.
+
+Status: COMPLETE
+
 ### Phase 7 — Bounded Sandbox Action
 
 Goal: given an investigation's already-persisted, immutable Phase 6
@@ -519,9 +720,10 @@ mutation of financial event history. The vertical slice becomes:
     INVESTIGATION -> REASONING -> SIMULATION -> DECISION -> POLICY -> SANDBOX ACTION
 
 Phase 7 does not execute anything against Razorpay or any other real
-payment provider (see section 9 -- that integration is not yet built), and
-it does not verify an executed action's actual outcome; that is Phase 8,
-not yet implemented.
+payment provider -- that is Phase 10's separate execution path (see
+section 9), gated on the same `ALLOWED` decision but never reachable from
+this module. Phase 7 also does not verify an executed action's actual
+outcome; that is Phase 8, described below.
 
 Delivered:
 - `investigation_actions` table (Alembic `0007`), FK to `investigations`
@@ -589,10 +791,10 @@ Delivered:
 Verification: `scripts/verify-phase-7.sh` was written (mirroring
 `verify-phase-6.sh`'s structure, including its dynamically-selected API
 port so this script cannot repeat the earlier fixed-port collision
-mistake). It has not yet been run by the project owner and Phase 7 has
-**not** been committed, pushed, or merged -- implementation is complete
-and self-reviewed, but independent verification and explicit owner
-approval are still pending. What was actually executed in the environment
+mistake). Phase 7 has since been committed, pushed, and merged, and Phase
+8, Phase 9, and Phase 10 all depend on its decision-authorization and
+sandbox-execution contract remaining exactly as documented here. What was
+actually executed in the environment
 this phase was implemented in (no Docker, no network, no installed Python
 packages available there -- the same constraint documented for prior
 phases): every new/modified Python file was confirmed to compile
@@ -888,39 +1090,116 @@ network, no real API key. `apps/api/tests/test_reasoning.py` (the FakeReasoningP
 pydantic-settings) could not be executed here and were syntax-checked
 only; neither required any change beyond the two new `test_config.py`
 cases, since no existing behavior they cover was touched.
-**No request was made to the real Anthropic API at any point during
-implementation or offline verification.** The one live smoke test exists
-but has not been run.
+No request was made to the real Anthropic API during this phase's own
+implementation or offline verification pass -- by design, per this
+phase's non-negotiable offline-first safety rule. Separately, the one
+deliberate live smoke test (`RUN_LIVE_CLAUDE_TEST=1 pytest tests/
+test_reasoning_live_smoke.py`) and a real end-to-end `/reason` request
+against the live, hosted Claude Sonnet 5 API have since been executed by
+the project owner, with their own approval, and both succeeded.
 
-Status: IMPLEMENTED (offline-verified; live call pending owner approval)
+Status: COMPLETE
+
+### Phase 10 -- Razorpay TEST Integration (Milestones 1-3)
+
+Goal: a real (not simulated) Razorpay TEST-mode integration, added as a
+second execution/verification path alongside Phase 7/8's sandbox path,
+under the exact same policy-authorization contract, delivered in three
+milestones. See section 9 for the full description of what each milestone
+delivers, the TEST-mode-only construction guard, the idempotency design
+for a real external call, and the EXPECTED-vs-OBSERVED provenance for its
+outcome verification. This section covers status and verification only,
+to avoid duplicating section 9's detail.
+
+Delivered and merged (PR #11, branch `razorpay-test-integration`):
+Milestone 1 (`app/providers/razorpay.py`, TEST-mode client), Milestone 2
+(`app/domain/razorpay_webhooks.py`, `POST /v1/webhooks/razorpay`, webhook
+ingestion), and Milestone 3 (`app/domain/razorpay_action.py`,
+`app/domain/razorpay_verification.py`, the policy-gated TEST action and
+outcome-verification endpoints). Test coverage: 7 dedicated test files
+(`test_razorpay_provider.py`, `test_razorpay_webhooks_domain.py`,
+`test_razorpay_webhooks_router.py`, `test_razorpay_action_domain.py`,
+`test_razorpay_action_router.py`, `test_razorpay_verification_domain.py`,
+`test_razorpay_verification_router.py`) totaling 115 test functions.
+
+During implementation, a full local backend run (`pytest`) surfaced 3
+failures in the router-level Razorpay verification suite; investigation
+traced them to a test-fixture defect, not a production bug: the Milestone
+3 router tests all share one fixed TEST merchant (webhook-derived events
+always route to `RAZORPAY_DEFAULT_MERCHANT_ID`, so, unlike other test
+modules, these tests cannot isolate themselves with a fresh per-test
+merchant), and an earlier version of the test helper anchored each test's
+investigation window to the real current time -- allowing evidence from
+one test's events to fall inside another test's Phase 3 detection window.
+This was fixed entirely within the test suite (anchoring each test to an
+isolated, randomized timestamp far outside every other test's detection
+window; zero production code changed) and merged. This documentation pass
+did not have a working Python environment to re-run the suite and confirm
+a final pass count -- see the recurring package-registry-access
+constraint noted throughout this section; run `pytest` locally to
+reproduce.
+
+Not yet done: Milestone 4 (an actual live call to Razorpay's TEST API,
+gated behind explicit, separate operator approval -- the same kind of
+gate Phase 9's live Claude smoke test was originally held behind, before
+the project owner ran and approved it) has not been run. There is no
+frontend UI for this phase's endpoints yet (see section 9).
+for this phase's endpoints yet (see section 9).
+
+Status: MILESTONES 1-3 COMPLETE; MILESTONE 4 NOT STARTED
 
 ## 13. Phase completion status
 
 Phases 1-8 are COMPLETE (implemented, independently verified,
 documented) -- see the Phase 5 section above for exactly what was
 executed in the implementation environment versus on the project owner's
-machine (the same pattern applies to Phase 6, verified on the project
-owner's machine after implementation). Phase 8 was self-reviewed and
-genuinely exercised in the implementation environment (see the Phase 8
-section above for exactly what that means and what it does not), and has
-since been independently verified by the project owner -- both the full
+machine; the same environment-constraint pattern applies to Phase 6
+(`verify-phase-6.sh` exists but was not re-run during this documentation
+pass -- see section 12, Phase 6). Phase 8 was self-reviewed and genuinely
+exercised in the implementation environment (see the Phase 8 section
+above for exactly what that means and what it does not), and has since
+been independently verified by the project owner -- both the full
 automated verification and the manual browser walkthrough are complete.
-Phase 9 is IMPLEMENTED but not yet COMPLETE: the configuration and
-provider changes are made, the new evaluation module and its tests were
-actually executed offline (see the Phase 9 section above), and no request
-was made to the real Anthropic API at any point -- by design, per an
-explicit non-negotiable safety rule for this phase. Phase 9 will not be
-marked COMPLETE until the one deliberate live smoke test
-(`RUN_LIVE_CLAUDE_TEST=1 pytest tests/test_reasoning_live_smoke.py`) has
-actually been run, by the project owner, with their own approval.
+Phase 9 is COMPLETE: the configuration and provider changes are made, the
+new evaluation module and its tests were executed offline (see the Phase
+9 section above), and the one deliberate live smoke test
+(`RUN_LIVE_CLAUDE_TEST=1 pytest tests/test_reasoning_live_smoke.py`),
+along with a real end-to-end `/reason` request against the live, hosted
+Claude Sonnet 5 API, have since been run by the project owner, with their
+own approval, and both succeeded. Phase 10 (sections 9 and 12) has
+Milestones 1-3 merged and covered by 115 test functions across 7 test
+files; Milestone 4 (the one live Razorpay TEST-API call) has not been
+run -- it remains gated behind its own explicit, separate operator
+approval, independent of Phase 9's now-completed gate.
+
+**Remaining before demo/buildathon readiness**, stated plainly rather than
+implied:
+1. Phase 10's Milestone 4 live Razorpay TEST call has not been run.
+2. The Razorpay TEST path (Phase 10) has no frontend UI -- it is exercised
+   via direct API calls only (see section 9).
+3. Causal ROOT CAUSE detection and LEARN (section 3) remain unimplemented
+   -- Phase 4's reasoning layer proposes hypotheses, it does not confirm
+   causes, and nothing in the system adjusts its own thresholds or
+   assumptions from past outcomes.
+4. Section 8's synthetic incident generator / benchmark environment, and
+   section 10's broader golden-answer evaluation corpus, do not exist.
+5. There is no deployment configuration in this repository (no Dockerfile
+   beyond local development, no CI workflow, no hosting config) -- section
+   15's local Docker Compose setup is the only documented way to run
+   FIN-SCOPE today.
+6. A broader "command center" product-UI redesign has been scoped (branch
+   `product-ui-command-center`) but not started -- that branch currently
+   contains no code changes beyond `main`. The existing frontend (Phases
+   1-8, section 6) is the current, functional UI.
 
 ## 14. Verification results
 
 See `docs/verification/phase-01.md` and `docs/verification/phase-02.md`
 for the full checklists, exact commands, and the issues found and fixed
-during Phase 1 and Phase 2 verification. Phase 3 and Phase 4's results are
-summarized directly below, since no separate `docs/verification/phase-03.md`
-or `docs/verification/phase-04.md` exists.
+during Phase 1 and Phase 2 verification. Phase 3 through Phase 10's
+results are summarized directly below (and, for Phase 6, Phase 9, and
+Phase 10, in section 12), since no `docs/verification/phase-03.md`
+through `phase-10.md` file exists for any of them.
 
 Phase 1 summary: 9/9 backend tests passed, ruff clean, mypy clean, both
 Alembic directions verified, live DB/Redis health and API-key auth checks
@@ -974,6 +1253,38 @@ execution of the `_simulate`/`_eligible_events` calculation functions
 against every fixture case `test_simulation.py` covers were run directly
 instead, with all expected numbers matching. See section 12 (Phase 5) for
 detail.
+Phase 6 summary: `scripts/verify-phase-6.sh` exists and mirrors the
+structure of Phases 4-5's scripts (Docker Compose Postgres/Redis, the
+full backend suite, frontend lint/build, security/hygiene checks). It was
+not re-run as part of this documentation pass -- see section 12 (Phase 6)
+for the exact test-file/function counts confirmed present in the
+repository.
+
+Phase 7 and Phase 8 summaries: see section 12 (Phase 7, Phase 8) for
+exactly what was executed in the implementation environment (`py_compile`,
+direct execution of the pure domain functions' own test suites, `tsc
+--noEmit`, `eslint`, and each script's own security/hygiene checks) versus
+what still requires the project owner's machine (the full Docker/Postgres
+suite, `ruff`, `mypy`, live API checks, Alembic upgrade/downgrade, and the
+manual browser walkthrough).
+
+Phase 9 summary: see section 12 (Phase 9) -- `app/eval/reasoning_eval.py`
+and `test_reasoning_eval.py` (12/12) and `test_reasoning_provider.py`
+(9/9) were executed directly in the implementation environment by
+stubbing only unrelated imports (no network, no real API key); the
+FastAPI/SQLAlchemy-dependent reasoning suite and two new config tests were
+syntax-checked only. No request was made to the real Anthropic API during
+this offline implementation pass; the project owner has since separately
+run the live smoke test and a real end-to-end `/reason` request against
+Claude Sonnet 5, both successfully (see section 12, Phase 9).
+
+Phase 10 summary: see section 12 (Phase 10) and section 9 for full detail.
+115 test functions exist across 7 dedicated Razorpay test files. A
+test-fixture evidence-isolation bug (not a production bug) was found and
+fixed in the Milestone 3 router-level verification tests during
+development, and the branch was merged (PR #11). This documentation pass
+did not have a working Python environment to re-run the suite and confirm
+a final pass count.
 
 ## 15. Local setup
 
@@ -1004,9 +1315,11 @@ Then visit `http://localhost:3000` for backend health,
 `http://localhost:3000/investigations` to run and inspect incident
 investigations.
 
-Or run `bash scripts/verify-phase-1.sh` / `bash scripts/verify-phase-2.sh` /
-`bash scripts/verify-phase-3.sh` / `bash scripts/verify-phase-4.sh` to do
-all of the above plus each phase's full verification suite in one pass.
+Or run `bash scripts/verify-phase-1.sh` through `bash scripts/verify-phase-8.sh`
+(one script per phase; Phase 9 and Phase 10 have no dedicated
+`verify-phase-*.sh` of their own -- see section 12 for exactly how each
+was verified instead) to do all of the above plus each phase's full
+verification suite in one pass.
 Phase 4's reasoning endpoint works with no further setup -- it reports
 itself as unavailable if `ANTHROPIC_API_KEY` is unset in `.env`; set it to
 try reasoning against the real provider.
@@ -1017,8 +1330,16 @@ See `.env.example` for the complete list and comments. `API_KEY` is required
 by the backend at startup; `DATABASE_URL` and `REDIS_URL` default to the
 local docker-compose services. `CORS_ALLOWED_ORIGINS` is only read outside
 development (in development, `localhost:3000`/`:3001` are always allowed).
-Razorpay keys remain reserved for a later phase and are optional until
-then. `ANTHROPIC_API_KEY` configures the Phase 4/9 reasoning provider (see
+`RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, and `RAZORPAY_WEBHOOK_SECRET`
+are actively used by Phase 10 (section 9) but remain optional -- the
+backend starts and runs fine with none of them set; the Razorpay
+endpoints simply fail closed. `RAZORPAY_TEST_MODE_CONFIRMED` (default
+`false`) is a second, independent guard the TEST-mode client requires
+alongside a `rzp_test_`-prefixed key before it will construct at all.
+`RAZORPAY_DEFAULT_MERCHANT_ID` is the one FIN-SCOPE merchant every
+verified webhook is currently attributed to (Razorpay payloads identify a
+Razorpay account, not a FIN-SCOPE merchant; there is no multi-merchant
+mapping yet).
 section 12) and is optional -- without it, reasoning reports itself as
 unavailable rather than failing. `ANTHROPIC_MODEL` (default
 `claude-sonnet-5`) and `ANTHROPIC_TIMEOUT_SECONDS` (default `30`) are also
@@ -1083,6 +1404,23 @@ append-only history, one investigation never able to read another's
 simulation result, and auth/404s -- no LLM/provider dependency anywhere in
 this suite, since the simulator itself has none. Frontend: `npx tsc --noEmit`,
 `npm run lint`, `npm run build`.
+`apps/api/tests/test_decision_evaluation.py`, `test_policy.py`, and
+`test_decisions.py` (Phase 6) test the deterministic comparison/policy
+functions and their orchestration -- tie-break stage ordering, the
+currency-safety rule that skips the recovery tie-break entirely rather
+than scalarizing across currencies, every BLOCKED/REQUIRES_HUMAN_APPROVAL
+condition individually, an unconfigured currency never treated as safe,
+and the insufficient-evidence/no-eligible-scenario short-circuits -- no
+LLM/provider dependency anywhere in this suite. `apps/api/tests/
+test_razorpay_provider.py`, `test_razorpay_webhooks_domain.py`,
+`test_razorpay_webhooks_router.py`, `test_razorpay_action_domain.py`,
+`test_razorpay_action_router.py`, `test_razorpay_verification_domain.py`,
+and `test_razorpay_verification_router.py` (Phase 10) test the TEST-mode
+construction guard, webhook signature verification and idempotent replay,
+the policy-gated action's authorization re-derivation and concurrent-
+insert-race handling, and outcome verification's EXPECTED/OBSERVED
+provenance -- every one of these mocks `httpx.post` or Razorpay's HTTP
+layer directly; none of this suite makes a real network call to Razorpay.
 
 ## 18. Known limitations
 
@@ -1092,9 +1430,31 @@ this suite, since the simulator itself has none. Frontend: `npx tsc --noEmit`,
   heuristic, explicitly not causal root-cause reasoning. Phase 4 adds a
   reasoning layer that proposes plausible, evidence-grounded hypotheses
   over that evidence, but this is still not causal ROOT CAUSE detection --
-  see sections 4 and 12 (Phase 4). Phase 5 adds a deterministic (non-AI)
-  SIMULATE step -- see section 12 (Phase 5). Causal ROOT CAUSE, DECIDE,
-  POLICY, ACT, VERIFY, and LEARN remain future phases.
+  see sections 4 and 12 (Phase 4). Phase 5 through Phase 10 add a
+  deterministic SIMULATE, DECIDE, POLICY, ACT, and VERIFY -- see section
+  12. Causal ROOT CAUSE detection and LEARN (a feedback loop that adjusts
+  detection thresholds, simulation assumptions, or policy limits from past
+  outcomes) remain unimplemented.
+- The Razorpay TEST path (Phase 10) has no frontend UI: `apps/web`'s API
+  proxy routes and the investigation detail page cover the sandbox path
+  (Phases 6-8) only. Triggering or viewing a Razorpay TEST action or its
+  verification today requires calling the backend API directly.
+- Phase 10's Milestone 4 live Razorpay TEST call is implemented but
+  deliberately not yet run -- it requires explicit, separate operator
+  approval and a real credential, per this project's own safety rules
+  (Phase 9's equivalent live-call gate has since been passed; see section
+  12, Phase 9).
+- Section 8's synthetic event generator / incident injector does not
+  exist. It is a different thing from Phase 7's "Bounded Sandbox Action"
+  and Phase 10's Razorpay TEST path (both implemented); it would be a
+  benchmark/stress-test data generator, not an execution path.
+- This repository has no deployment configuration: no Dockerfile beyond
+  the local development image implied by `infra/docker-compose.yml`, no
+  CI workflow, and no hosting/platform config for any environment. Local
+  Docker Compose (section 15) is the only documented way to run
+  FIN-SCOPE.
+- A broader product-UI "command center" redesign is scoped but not
+  started; see section 13.
 - Reasoning re-runs are append-only: each call to `POST .../reason`
   persists a new `investigation_reasoning` row rather than updating or
   deduplicating a previous one, even if the evidence has not changed.

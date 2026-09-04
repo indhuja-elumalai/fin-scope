@@ -53,3 +53,25 @@ textarea:focus-visible {
 ::selection {
   background: #bfdbfe; /* blue-200 */
 }
+
+/* Financial figures line up better with tabular (fixed-width) numerals --
+ * applied globally rather than repeating font-feature-settings per
+ * element; Tailwind's `tabular-nums` utility already used throughout the
+ * app becomes a no-op reinforcement rather than the only source of this. */
+body {
+  font-feature-settings: "tnum" 1, "cv11" 1;
+}
+
+/* Slim, low-contrast scrollbar for horizontally-scrolling strips (the
+ * workflow stepper on narrow viewports) -- restrained, not decorative. */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-subtle) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 999px;
+}
