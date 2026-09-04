@@ -14,6 +14,7 @@ import {
   ErrorText,
   LoadingRow,
   PageHeader,
+  SectionHeading,
   StatTile,
 } from "@/components/ui";
 
@@ -254,33 +255,39 @@ export default function CommandCenterPage() {
 
         <div className="space-y-4">
           <Card className="p-4">
-            <h2 className="text-sm font-semibold text-slate-900 mb-1">
-              Workflow
-            </h2>
+            <SectionHeading title="FROM SIGNAL → TO SAFE ACTION" />
 
-            <p className="text-xs text-slate-500 mb-3">
-              Every investigation moves through the same deterministic-and-AI pipeline.
-            </p>
-
-            <ol className="space-y-1.5 text-xs text-slate-600">
+            <div className="mt-3">
               {[
-                "FIND — rule-based incident detection",
-                "REASON — evidence-grounded AI hypotheses",
-                "IMPACT — currency-safe financial exposure",
-                "SIMULATE — deterministic scenario projection",
-                "DECIDE — preferred-scenario comparison",
-                "POLICY — autonomous-action authorization",
-                "ACT — bounded sandbox or Razorpay TEST",
-                "VERIFY — expected vs. observed outcome",
-              ].map((step, i) => (
-                <li key={step} className="flex gap-2">
-                  <span className="text-slate-300 tabular-nums w-3 shrink-0">
-                    {i + 1}
-                  </span>
-                  <span>{step}</span>
-                </li>
+                { label: "Financial events", ai: false },
+                { label: "Detect the anomaly", ai: false },
+                { label: "Investigate the evidence", ai: false },
+                { label: "Reason about possible causes", ai: true },
+                { label: "Simulate the consequences", ai: false },
+                { label: "Check policy & authorization", ai: false },
+                { label: "Execute within bounds", ai: false },
+                { label: "Verify the outcome", ai: false },
+              ].map((step, i, steps) => (
+                <div key={step.label}>
+                  <div
+                    className={`text-xs py-1 ${
+                      step.ai ? "text-indigo-700 font-medium" : "text-slate-600"
+                    }`}
+                  >
+                    {step.label}
+                  </div>
+                  {i < steps.length - 1 && (
+                    <div className="text-slate-300 text-xs leading-none" aria-hidden="true">
+                      ↓
+                    </div>
+                  )}
+                </div>
               ))}
-            </ol>
+            </div>
+
+            <p className="text-xs text-slate-500 mt-3 pt-3 border-t border-slate-100">
+              No black-box actions. Every decision is bounded, auditable, and verifiable.
+            </p>
           </Card>
 
           <Card className="p-4">
