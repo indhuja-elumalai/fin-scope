@@ -22,8 +22,6 @@ const DATA_LINKS = [
   { href: "/events", label: "Events" },
 ];
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
 function NavGroup({
   label,
   links,
@@ -73,7 +71,7 @@ export function Nav() {
   // plane nav bar should not be silently hammering /health forever.
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API_BASE_URL}/health`, { cache: "no-store" })
+    fetch("/api/health", { cache: "no-store" })
       .then((response) => response.json())
       .then((body: { status?: string }) => {
         if (cancelled) return;
