@@ -1,6 +1,5 @@
 # FIN-SCOPE
-fin-scope-tawny.vercel.app
-
+[fin-scope-tawny.vercel.app](https://fin-scope-tawny.vercel.app)
 Financial Intelligence, Simulation & Controlled Decision Engine
 
 ## 1. Problem
