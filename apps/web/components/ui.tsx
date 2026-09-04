@@ -94,6 +94,12 @@ const BADGE_VARIANTS = {
   // FAILED/INSUFFICIENT_OBSERVATION reuse allowed/requires_approval/blocked/
   // neutral respectively. See app.domain.outcome_verification.
   verification: "bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200",
+  // Phase 10 (Razorpay TEST integration): a REAL network call to
+  // Razorpay's TEST API -- structurally different from Phase 7's
+  // in-process "sandbox" simulation (teal, above), so it gets its own
+  // color rather than reusing "sandbox" and implying the same thing.
+  // Still clearly TEST-mode, never a production/live-money color.
+  razorpay: "bg-orange-50 text-orange-700 border-orange-200",
 } as const;
 
 export function Badge({
@@ -215,6 +221,207 @@ export function KeyValueRow({ label, value }: { label: ReactNode; value: ReactNo
     <div className="px-4 py-3 flex justify-between gap-4 text-sm">
       <dt className="text-slate-500">{label}</dt>
       <dd className="text-right text-slate-900 font-medium">{value}</dd>
+    </div>
+  );
+}
+// --- Application shell / command-center primitives -------------------
+// Added for the product-ui-command-center pass. Deliberately still no new
+// dependency: plain Tailwind + the existing Badge/Card patterns above.
+
+export function EnvironmentBadge({
+  health,
+}: {
+  health: "checking" | "ok" | "degraded" | "unreachable";
+}) {
+  const dot =
+    health === "ok"
+      ? "bg-emerald-500"
+      : health === "degraded"
+        ? "bg-amber-500"
+        : health === "unreachable"
+          ? "bg-red-500"
+          : "bg-slate-300";
+  const label =
+    health === "ok"
+      ? "API reachable"
+      : health === "degraded"
+        ? "API degraded"
+        : health === "unreachable"
+          ? "API unreachable"
+          : "Checking API…";
+  return (
+    <div className="flex items-center gap-2">
+      <span
+        className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800"
+        title="Razorpay TEST mode only -- this deployment has no production/live-money path (see README section 9)."
+      >
+        Test environment
+      </span>
+      <span className="flex items-center gap-1.5 text-xs text-slate-500">
+        <span className={`inline-block w-1.5 h-1.5 rounded-full ${dot}`} aria-hidden="true" />
+        <span className="sr-only sm:not-sr-only">{label}</span>
+      </span>
+    </div>
+  );
+}
+
+export type WorkflowStageState = "done" | "current" | "pending" | "skipped";
+
+export type WorkflowStage = {
+  key: string;
+  label: string;
+  state: WorkflowStageState;
+  href?: string;
+};
+
+// FIND -> REASON -> IMPACT -> SIMULATE -> DECIDE -> POLICY -> ACT -> VERIFY
+// (README section 3 / section 12). Purely presentational -- the caller
+// computes each stage's state from data it already fetched; this component
+// invents nothing and calls no endpoint.
+export function WorkflowStepper({ stages }: { stages: WorkflowStage[] }) {
+  return (
+    <nav aria-label="Investigation workflow" className="overflow-x-auto">
+      <ol className="flex items-center gap-0 min-w-max">
+        {stages.map((stage, i) => {
+          const isLast = i === stages.length - 1;
+          const circle =
+            stage.state === "done"
+              ? "bg-slate-900 border-slate-900 text-white"
+              : stage.state === "current"
+                ? "bg-white border-slate-900 text-slate-900"
+                : stage.state === "skipped"
+                  ? "bg-white border-slate-200 text-slate-300"
+                  : "bg-white border-slate-200 text-slate-400";
+          const label =
+            stage.state === "pending" || stage.state === "skipped"
+              ? "text-slate-400"
+              : "text-slate-900 font-medium";
+          const content = (
+            <div className="flex items-center gap-2 shrink-0">
+              <span
+                className={`flex items-center justify-center w-6 h-6 rounded-full border-2 text-[11px] font-semibold shrink-0 ${circle}`}
+                aria-hidden="true"
+              >
+                {stage.state === "done" ? "✓" : i + 1}
+              </span>
+              <span className={`text-xs whitespace-nowrap ${label}`}>{stage.label}</span>
+            </div>
+          );
+          return (
+            <li key={stage.key} className="flex items-center shrink-0">
+              {stage.href && stage.state !== "pending" ? (
+                <a href={stage.href} className="rounded hover:opacity-70 transition-opacity">
+                  {content}
+                </a>
+              ) : (
+                content
+              )}
+              {!isLast && (
+                <span
+                  className={`w-6 sm:w-10 h-px mx-1.5 shrink-0 ${
+                    stage.state === "done" ? "bg-slate-900" : "bg-slate-200"
+                  }`}
+                  aria-hidden="true"
+                />
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </nav>
+  );
+}
+
+export function Timeline({ children }: { children: ReactNode }) {
+  return (
+    <ol role="list" className="relative">
+      {children}
+    </ol>
+  );
+}
+
+export function TimelineItem({
+  title,
+  meta,
+  trailing,
+  isLast = false,
+  tone = "neutral",
+  id,
+}: {
+  title: ReactNode;
+  meta?: ReactNode;
+  trailing?: ReactNode;
+  isLast?: boolean;
+  tone?: "neutral" | "accent";
+  id?: string;
+}) {
+  const dot = tone === "accent" ? "bg-blue-600" : "bg-slate-300";
+  return (
+    <li id={id} className="relative pl-6 pb-4 last:pb-0 scroll-mt-20">
+      {!isLast && (
+        <span
+          className="absolute left-[5px] top-3 bottom-0 w-px bg-slate-200"
+          aria-hidden="true"
+        />
+      )}
+      <span
+        className={`absolute left-0 top-1.5 w-[11px] h-[11px] rounded-full ring-4 ring-white ${dot}`}
+        aria-hidden="true"
+      />
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">{title}</div>
+        {trailing && <div className="shrink-0 text-right">{trailing}</div>}
+      </div>
+      {meta && <div className="text-xs text-slate-400 mt-0.5">{meta}</div>}
+    </li>
+  );
+}
+
+export function StatTile({
+  label,
+  value,
+  hint,
+  tone = "neutral",
+}: {
+  label: string;
+  value: ReactNode;
+  hint?: ReactNode;
+  tone?: "neutral" | "danger" | "success";
+}) {
+  const valueTone =
+    tone === "danger" ? "text-red-700" : tone === "success" ? "text-emerald-700" : "text-slate-900";
+  return (
+    <Card className="p-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
+      <p className={`mt-1.5 text-2xl font-semibold tabular-nums ${valueTone}`}>{value}</p>
+      {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+    </Card>
+  );
+}
+
+export function PageHeader({
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  eyebrow?: string;
+  title: ReactNode;
+  description?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div>
+        {eyebrow && (
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1">
+            {eyebrow}
+          </p>
+        )}
+        <h1 className="text-xl font-semibold text-slate-900 tracking-tight">{title}</h1>
+        {description && <p className="text-sm text-slate-500 mt-1 max-w-2xl">{description}</p>}
+      </div>
+      {children && <div className="flex items-center gap-2 shrink-0">{children}</div>}
     </div>
   );
 }

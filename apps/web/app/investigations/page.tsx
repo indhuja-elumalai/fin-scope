@@ -12,6 +12,7 @@ import {
   Input,
   Label,
   LoadingRow,
+  PageHeader,
   Select,
   SuccessText,
 } from "@/components/ui";
@@ -146,12 +147,12 @@ export default function InvestigationsPage() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto px-6 py-10">
-      <h1 className="text-xl font-semibold text-slate-900">Incident investigations</h1>
-      <p className="text-sm text-slate-500 mt-1">
-        Run a deterministic FIND → dominant-signal → impact analysis over a merchant&apos;s
-        recent financial events, then reason about plausible, evidence-grounded explanations.
-      </p>
+    <main className="max-w-4xl mx-auto px-6 py-10">
+      <PageHeader
+        eyebrow="Workflow"
+        title="Incident investigations"
+        description="Run a deterministic FIND → dominant-signal → impact analysis over a merchant's recent financial events, then reason about plausible, evidence-grounded explanations."
+      />
 
       <Card className="mt-8 p-5">
         <form onSubmit={handleTrigger} className="space-y-4">
@@ -203,7 +204,7 @@ export default function InvestigationsPage() {
       </Card>
 
       <div className="mt-8">
-        <div className="flex gap-4 items-end mb-3">
+        <div className="flex gap-4 items-end justify-between mb-3 flex-wrap">
           <div>
             <Label htmlFor="filter-merchant">Filter by merchant</Label>
             <Select
@@ -220,10 +221,14 @@ export default function InvestigationsPage() {
               ))}
             </Select>
           </div>
-          <span className="text-xs text-slate-400 pb-2">{total} total</span>
+          <span className="text-xs text-slate-400 pb-2 tabular-nums">{total} total</span>
         </div>
 
-        {loading && <LoadingRow>Loading investigations…</LoadingRow>}
+        {loading && (
+          <Card className="p-5">
+            <LoadingRow>Loading investigations…</LoadingRow>
+          </Card>
+        )}
         {error && <ErrorText>{error}</ErrorText>}
         {!loading && !error && investigations.length === 0 && (
           <EmptyState>No investigations match this filter.</EmptyState>
@@ -237,18 +242,29 @@ export default function InvestigationsPage() {
                     href={`/investigations/${inv.id}`}
                     className="px-4 py-3.5 flex justify-between items-center gap-4 hover:bg-slate-50 transition-colors"
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <Badge variant={inv.incident_detected ? "danger" : "neutral"}>
-                        {inv.incident_detected ? "Incident" : "No incident"}
-                      </Badge>
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        className={`w-1.5 h-8 rounded-full shrink-0 ${
+                          inv.incident_detected ? "bg-red-400" : "bg-slate-200"
+                        }`}
+                        aria-hidden="true"
+                      />
                       <div className="min-w-0">
-                        <div className="text-sm text-slate-500 truncate">
-                          {inv.evidence_event_count} events ·{" "}
+                        <div className="flex items-center gap-2">
+                          <Badge variant={inv.incident_detected ? "danger" : "neutral"}>
+                            {inv.incident_detected ? "Incident" : "No incident"}
+                          </Badge>
+                          <span className="text-xs text-slate-400 tabular-nums">
+                            {inv.evidence_event_count} event
+                            {inv.evidence_event_count === 1 ? "" : "s"}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-400 mt-0.5 truncate">
                           {new Date(inv.created_at).toLocaleString()}
                         </div>
                       </div>
                     </div>
-                    <span className="text-slate-500 text-xs shrink-0">
+                    <span className="text-slate-500 text-xs shrink-0 font-medium">
                       {inv.dominant_signal_event_type ?? "—"}
                     </span>
                   </Link>

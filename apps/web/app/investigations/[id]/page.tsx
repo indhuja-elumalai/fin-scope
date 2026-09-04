@@ -11,8 +11,13 @@ import {
   EmptyState,
   ErrorText,
   LoadingRow,
+  PageHeader,
   SectionHeading,
   Select,
+  Timeline,
+  TimelineItem,
+  WorkflowStepper,
+  type WorkflowStage,
 } from "@/components/ui";
 
 type EvidenceItem = {
@@ -285,6 +290,67 @@ type Verification = {
   created_at: string;
 };
 
+// Phase 10, Milestone 3: REAL Razorpay TEST action + outcome
+// verification. A second execution/verification path alongside Phase
+// 7/8, gated on the exact same persisted ALLOWED decision -- never a
+// sandbox simulation, never production money movement. Field names below
+// are copied verbatim from app.schemas.razorpay_action /
+// app.schemas.razorpay_verification.
+type RazorpayActionStatus = "pending" | "executed" | "rejected";
+
+type RazorpayCurrencyAmount = { currency: string; amount: string };
+
+type RazorpayAction = {
+  id: string;
+  investigation_id: string;
+  decision_id: string;
+  status: RazorpayActionStatus;
+  rejection_reason: string | null;
+  scenario: SimulationScenario | null;
+  simulation_id: string | null;
+  policy_decision_snapshot: PolicyDecisionValue | null;
+  razorpay_order_id: string | null;
+  razorpay_receipt: string | null;
+  executor_version: string;
+  raw_response: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+// Reuses Phase 8's ExpectedSnapshot/VerificationStatus/VerificationComparison
+// shapes exactly -- app.domain.razorpay_verification re-derives EXPECTED
+// with the same app.domain.outcome_verification.derive_expected_snapshot
+// and reuses app.domain.outcome_verification.verify() unmodified. Only
+// OBSERVED has a different shape, since it comes from a real webhook-
+// ingested FinancialEvent rather than a sandbox_result.
+type RazorpayObservedSnapshot =
+  | {
+      available: true;
+      observed_success_count: number | null;
+      observed_failure_count: number | null;
+      observed_recovery_by_currency: RazorpayCurrencyAmount[];
+      observation_model_version: string;
+      observation_financial_event_id: string;
+      observation_source: string;
+      observation_event_type: string;
+    }
+  | { available: false; reason: string };
+
+type RazorpayVerification = {
+  id: string;
+  investigation_id: string;
+  razorpay_action_id: string;
+  decision_id: string | null;
+  simulation_id: string | null;
+  status: VerificationStatus;
+  verifier_version: string;
+  expected_snapshot: ExpectedSnapshot;
+  observed_snapshot: RazorpayObservedSnapshot;
+  comparison: VerificationComparison;
+  evidence: Record<string, unknown>;
+  created_at: string;
+};
+
 const STATUS_COPY: Record<ReasoningStatus, { label: string; tone: "success" | "neutral" | "danger" }> = {
   completed: { label: "Reasoning complete", tone: "success" },
   insufficient_evidence: { label: "Insufficient evidence", tone: "neutral" },
@@ -329,6 +395,19 @@ function decisionSummaryLabel(decision: Decision): string {
 // see the "sandbox" badge variant note in components/ui.tsx for why no new
 // status colors were added.
 const ACTION_STATUS_COPY: Record<ActionStatus, { label: string; variant: "allowed" | "blocked" }> = {
+  executed: { label: "Executed", variant: "allowed" },
+  rejected: { label: "Rejected", variant: "blocked" },
+};
+
+// Phase 10: a real Razorpay TEST action has a third status Phase 7's
+// sandbox ActionStatus does not -- "pending" is a real, persistable,
+// at-rest status here (see app.domain.razorpay_action module docstring),
+// not just a transient in-memory state.
+const RAZORPAY_ACTION_STATUS_COPY: Record<
+  RazorpayActionStatus,
+  { label: string; variant: "allowed" | "blocked" | "neutral" }
+> = {
+  pending: { label: "Pending", variant: "neutral" },
   executed: { label: "Executed", variant: "allowed" },
   rejected: { label: "Rejected", variant: "blocked" },
 };
@@ -399,6 +478,31 @@ export default function InvestigationDetailPage() {
   const [verificationForActionLoaded, setVerificationForActionLoaded] = useState(false);
   const [verificationRunning, setVerificationRunning] = useState(false);
   const [verificationError, setVerificationError] = useState<string | null>(null);
+
+  // Phase 10, Milestone 3: REAL Razorpay TEST action + outcome
+  // verification. Mirrors the actionsHistory/actionForDecision and
+  // verificationsHistory/verificationForAction split above exactly, one
+  // parallel execution path over -- gated on the SAME latest decision,
+  // never a separate authorization.
+  const [razorpayActionsHistory, setRazorpayActionsHistory] = useState<RazorpayAction[]>([]);
+  const [razorpayActionsLoaded, setRazorpayActionsLoaded] = useState(false);
+  const [razorpayActionForDecision, setRazorpayActionForDecision] = useState<RazorpayAction | null>(
+    null
+  );
+  const [razorpayActionForDecisionLoaded, setRazorpayActionForDecisionLoaded] = useState(false);
+  const [razorpayActionRunning, setRazorpayActionRunning] = useState(false);
+  const [razorpayActionError, setRazorpayActionError] = useState<string | null>(null);
+
+  const [razorpayVerificationsHistory, setRazorpayVerificationsHistory] = useState<
+    RazorpayVerification[]
+  >([]);
+  const [razorpayVerificationsLoaded, setRazorpayVerificationsLoaded] = useState(false);
+  const [razorpayVerificationForAction, setRazorpayVerificationForAction] =
+    useState<RazorpayVerification | null>(null);
+  const [razorpayVerificationForActionLoaded, setRazorpayVerificationForActionLoaded] =
+    useState(false);
+  const [razorpayVerificationRunning, setRazorpayVerificationRunning] = useState(false);
+  const [razorpayVerificationError, setRazorpayVerificationError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -675,6 +779,158 @@ export default function InvestigationDetailPage() {
     };
   }, [params.id, latestActionId]);
 
+  // --- Phase 10, Milestone 3: REAL Razorpay TEST action + verification ---
+  // Same loading pattern as the sandbox action/verification effects above,
+  // one parallel execution path over. See app.domain.razorpay_action /
+  // app.domain.razorpay_verification for the orchestration these mirror.
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRazorpayActionsHistory() {
+      try {
+        const response = await fetch(`/api/investigations/${params.id}/razorpay-actions?limit=20`);
+        if (!response.ok) {
+          throw new Error(`Failed to load Razorpay TEST actions (${response.status})`);
+        }
+        const body = (await response.json()) as { items: RazorpayAction[] };
+        if (!cancelled) setRazorpayActionsHistory(body.items);
+      } catch (err) {
+        if (!cancelled) {
+          setRazorpayActionError(
+            err instanceof Error ? err.message : "Failed to load Razorpay TEST actions."
+          );
+        }
+      } finally {
+        if (!cancelled) setRazorpayActionsLoaded(true);
+      }
+    }
+
+    loadRazorpayActionsHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRazorpayActionForDecision() {
+      if (!latestDecisionId) {
+        if (!cancelled) {
+          setRazorpayActionForDecision(null);
+          setRazorpayActionForDecisionLoaded(true);
+        }
+        return;
+      }
+
+      if (!cancelled) setRazorpayActionForDecisionLoaded(false);
+
+      try {
+        const response = await fetch(
+          `/api/investigations/${params.id}/decisions/${latestDecisionId}/razorpay-action`
+        );
+        if (response.status === 404) {
+          if (!cancelled) setRazorpayActionForDecision(null);
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load Razorpay TEST action (${response.status})`);
+        }
+        const body = (await response.json()) as RazorpayAction;
+        if (!cancelled) setRazorpayActionForDecision(body);
+      } catch (err) {
+        if (!cancelled) {
+          setRazorpayActionError(
+            err instanceof Error ? err.message : "Failed to load Razorpay TEST action."
+          );
+        }
+      } finally {
+        if (!cancelled) setRazorpayActionForDecisionLoaded(true);
+      }
+    }
+
+    loadRazorpayActionForDecision();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, latestDecisionId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRazorpayVerificationsHistory() {
+      try {
+        const response = await fetch(
+          `/api/investigations/${params.id}/razorpay-verifications?limit=20`
+        );
+        if (!response.ok) {
+          throw new Error(`Failed to load Razorpay TEST verifications (${response.status})`);
+        }
+        const body = (await response.json()) as { items: RazorpayVerification[] };
+        if (!cancelled) setRazorpayVerificationsHistory(body.items);
+      } catch (err) {
+        if (!cancelled) {
+          setRazorpayVerificationError(
+            err instanceof Error ? err.message : "Failed to load Razorpay TEST verifications."
+          );
+        }
+      } finally {
+        if (!cancelled) setRazorpayVerificationsLoaded(true);
+      }
+    }
+
+    loadRazorpayVerificationsHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id]);
+
+  const latestRazorpayActionId = razorpayActionForDecision?.id ?? null;
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadRazorpayVerificationForAction() {
+      if (!latestRazorpayActionId) {
+        if (!cancelled) {
+          setRazorpayVerificationForAction(null);
+          setRazorpayVerificationForActionLoaded(true);
+        }
+        return;
+      }
+
+      if (!cancelled) setRazorpayVerificationForActionLoaded(false);
+
+      try {
+        const response = await fetch(
+          `/api/investigations/${params.id}/razorpay-actions/${latestRazorpayActionId}/verification`
+        );
+        if (response.status === 404) {
+          if (!cancelled) setRazorpayVerificationForAction(null);
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(`Failed to load Razorpay TEST verification (${response.status})`);
+        }
+        const body = (await response.json()) as RazorpayVerification;
+        if (!cancelled) setRazorpayVerificationForAction(body);
+      } catch (err) {
+        if (!cancelled) {
+          setRazorpayVerificationError(
+            err instanceof Error ? err.message : "Failed to load Razorpay TEST verification."
+          );
+        }
+      } finally {
+        if (!cancelled) setRazorpayVerificationForActionLoaded(true);
+      }
+    }
+
+    loadRazorpayVerificationForAction();
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, latestRazorpayActionId]);
+
   const runSimulation = useCallback(async () => {
     setSimulationRunning(true);
     setSimulationError(null);
@@ -806,8 +1062,104 @@ export default function InvestigationDetailPage() {
     }
   }, [params.id, latestActionId]);
 
+  // Bodyless POST -- the server derives authorization entirely from
+  // investigation_id/decision_id in the URL and the persisted Phase 6
+  // decision (see app.domain.razorpay_action.run_razorpay_action). This
+  // is a REAL network call to Razorpay's TEST API when the decision is
+  // ALLOWED and a TEST-mode client is configured server-side -- never a
+  // sandbox simulation, and the UI is never the source of authorization.
+  const runRazorpayAction = useCallback(async () => {
+    if (!latestDecisionId) return;
+    setRazorpayActionRunning(true);
+    setRazorpayActionError(null);
+    try {
+      const response = await fetch(
+        `/api/investigations/${params.id}/decisions/${latestDecisionId}/razorpay-action`,
+        { method: "POST" }
+      );
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof body.detail === "string" ? body.detail : "Failed to run Razorpay TEST action."
+        );
+      }
+      const action = body as RazorpayAction;
+      setRazorpayActionForDecision(action);
+      setRazorpayActionsHistory((prev) =>
+        prev.some((a) => a.id === action.id) ? prev : [action, ...prev]
+      );
+    } catch (err) {
+      setRazorpayActionError(
+        err instanceof Error ? err.message : "Failed to run Razorpay TEST action."
+      );
+    } finally {
+      setRazorpayActionRunning(false);
+    }
+  }, [params.id, latestDecisionId]);
+
+  // Bodyless POST -- the server derives everything from the persisted
+  // razorpay action / decision / simulation chain (see
+  // app.domain.razorpay_verification.run_razorpay_verification). OBSERVED
+  // comes only from a real, already-ingested Razorpay webhook event --
+  // idempotent per razorpay action_id, same as Phase 8's verification.
+  const runRazorpayVerification = useCallback(async () => {
+    if (!latestRazorpayActionId) return;
+    setRazorpayVerificationRunning(true);
+    setRazorpayVerificationError(null);
+    try {
+      const response = await fetch(
+        `/api/investigations/${params.id}/razorpay-actions/${latestRazorpayActionId}/verification`,
+        { method: "POST" }
+      );
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          typeof body.detail === "string"
+            ? body.detail
+            : "Failed to verify Razorpay TEST outcome."
+        );
+      }
+      const verification = body as RazorpayVerification;
+      setRazorpayVerificationForAction(verification);
+      setRazorpayVerificationsHistory((prev) =>
+        prev.some((v) => v.id === verification.id) ? prev : [verification, ...prev]
+      );
+    } catch (err) {
+      setRazorpayVerificationError(
+        err instanceof Error ? err.message : "Failed to verify Razorpay TEST outcome."
+      );
+    } finally {
+      setRazorpayVerificationRunning(false);
+    }
+  }, [params.id, latestRazorpayActionId]);
+
+  const workflowStages: WorkflowStage[] = investigation
+    ? [
+        { key: "find", label: "Find", state: "done" },
+        { key: "reason", label: "Reason", state: reasoning ? "done" : "pending" },
+        { key: "impact", label: "Impact", state: "done" },
+        { key: "simulate", label: "Simulate", state: simulations.length > 0 ? "done" : "pending" },
+        { key: "decide", label: "Decide", state: decisions.length > 0 ? "done" : "pending" },
+        {
+          key: "policy",
+          label: "Policy",
+          state: decisions[0]?.policy_decision ? "done" : "pending",
+        },
+        {
+          key: "act",
+          label: "Act",
+          state: actionForDecision || razorpayActionForDecision ? "done" : "pending",
+        },
+        {
+          key: "verify",
+          label: "Verify",
+          state: verificationForAction || razorpayVerificationForAction ? "done" : "pending",
+        },
+      ]
+    : [];
+
   return (
-    <main className="max-w-3xl mx-auto px-6 py-10">
+    <main className="max-w-4xl mx-auto px-6 py-10">
       <Link
         href="/investigations"
         className="text-sm text-slate-500 hover:text-slate-900 transition-colors"
@@ -820,18 +1172,21 @@ export default function InvestigationDetailPage() {
 
       {investigation && (
         <div className="mt-4 space-y-6">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
-                Investigation
-              </p>
-              <h1 className="text-xl font-semibold text-slate-900 flex items-center gap-2 mt-0.5">
+          <PageHeader
+            eyebrow="Investigation"
+            title={
+              <span className="flex items-center gap-2">
                 {investigation.incident_detected ? "Incident detected" : "No incident"}
                 <Badge variant="fact">FACT</Badge>
-              </h1>
-            </div>
+              </span>
+            }
+          >
             <span className="text-xs text-slate-400 font-mono">{investigation.id}</span>
-          </div>
+          </PageHeader>
+
+          <Card className="p-3 overflow-x-auto scrollbar-thin">
+            <WorkflowStepper stages={workflowStages} />
+          </Card>
 
           {/* 1. Incident */}
           <Card>
@@ -925,30 +1280,36 @@ export default function InvestigationDetailPage() {
             {investigation.evidence.length === 0 ? (
               <p className="text-sm text-slate-500 mt-2">No evidence events in this window.</p>
             ) : (
-              <ul className="mt-3 divide-y divide-slate-100">
-                {investigation.evidence.map((item) => (
-                  <li
-                    key={item.event_id}
-                    id={`evidence-${item.event_id}`}
-                    className="py-2.5 flex justify-between items-center text-sm scroll-mt-20"
-                  >
-                    <div>
-                      <Link
-                        href={`/events/${item.event_id}`}
-                        className="font-medium text-slate-900 hover:text-blue-600 transition-colors"
-                      >
-                        {item.event_type}
-                      </Link>
-                      <div className="text-slate-400 text-xs mt-0.5">
-                        {item.source} · {new Date(item.occurred_at).toLocaleString()}
-                      </div>
-                    </div>
-                    <span className="text-slate-500 text-xs tabular-nums">
-                      {item.amount ? `${item.amount} ${item.currency ?? ""}` : "—"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <div className="mt-4">
+                <Timeline>
+                  {investigation.evidence.map((item, i) => (
+                    <TimelineItem
+                      key={item.event_id}
+                      id={`evidence-${item.event_id}`}
+                      isLast={i === investigation.evidence.length - 1}
+                      tone={
+                        item.event_type === investigation.dominant_signal_event_type
+                          ? "accent"
+                          : "neutral"
+                      }
+                      title={
+                        <Link
+                          href={`/events/${item.event_id}`}
+                          className="font-medium text-slate-900 hover:text-blue-600 transition-colors text-sm"
+                        >
+                          {item.event_type}
+                        </Link>
+                      }
+                      meta={`${item.source} · ${new Date(item.occurred_at).toLocaleString()}`}
+                      trailing={
+                        <span className="text-slate-500 text-xs tabular-nums">
+                          {item.amount ? `${item.amount} ${item.currency ?? ""}` : "—"}
+                        </span>
+                      }
+                    />
+                  ))}
+                </Timeline>
+              </div>
             )}
           </Card>
 
@@ -1008,6 +1369,38 @@ export default function InvestigationDetailPage() {
             running={verificationRunning}
             error={verificationError}
             onRun={runVerification}
+          />
+
+          {/* 12. Razorpay TEST action (Phase 10, Milestone 3) -- a SECOND
+              execution path authorized by the exact same latest decision
+              Sandbox action above reads. A REAL network call to
+              Razorpay's TEST API, never a sandbox simulation and never
+              production money movement. */}
+          <RazorpayActionSection
+            latestDecision={decisions[0] ?? null}
+            razorpayActionForDecision={razorpayActionForDecision}
+            razorpayActionForDecisionLoaded={razorpayActionForDecisionLoaded}
+            razorpayActionsHistory={razorpayActionsHistory}
+            razorpayActionsLoaded={razorpayActionsLoaded}
+            running={razorpayActionRunning}
+            error={razorpayActionError}
+            onRun={runRazorpayAction}
+          />
+
+          {/* 13. Razorpay TEST outcome verification (Phase 10, Milestone 3)
+              -- anchored ONLY to the latest persisted, executed Razorpay
+              TEST action. OBSERVED here comes from a real, already-
+              ingested Razorpay webhook event, never from Phase 5/7 or LLM
+              output. */}
+          <RazorpayVerificationSection
+            latestAction={razorpayActionForDecision}
+            verificationForAction={razorpayVerificationForAction}
+            verificationForActionLoaded={razorpayVerificationForActionLoaded}
+            verificationsHistory={razorpayVerificationsHistory}
+            verificationsLoaded={razorpayVerificationsLoaded}
+            running={razorpayVerificationRunning}
+            error={razorpayVerificationError}
+            onRun={runRazorpayVerification}
           />
         </div>
       )}
@@ -1097,7 +1490,7 @@ function ReasoningResult({ reasoning }: { reasoning: Reasoning }) {
 
 function HypothesisCard({ hypothesis }: { hypothesis: Hypothesis }) {
   return (
-    <li className="border border-slate-200 rounded-lg p-3.5 bg-slate-50/50">
+    <li className="border border-slate-200 border-l-2 border-l-indigo-300 rounded-lg p-3.5 bg-slate-50/50">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-baseline gap-2">
           <span className="text-xs font-semibold text-slate-400 tabular-nums">
@@ -1165,6 +1558,18 @@ function SimulationSection({
   const latest = simulations[0] ?? null;
   const history = simulations.slice(1);
 
+  // Latest *completed* simulation per distinct scenario, newest first --
+  // the same reduction app.domain.decisions._latest_completed_candidates
+  // performs server-side for Phase 6, done here purely for display so a
+  // user can compare scenarios before ever running a decision evaluation.
+  // No new endpoint: this reuses the `simulations` list already fetched.
+  const latestByScenario = new Map<SimulationScenario, Simulation>();
+  for (const sim of simulations) {
+    if (sim.status !== "completed") continue;
+    if (!latestByScenario.has(sim.scenario)) latestByScenario.set(sim.scenario, sim);
+  }
+  const comparableScenarios = SCENARIO_ORDER.filter((s) => latestByScenario.has(s));
+
   return (
     <Card className="p-4">
       <SectionHeading eyebrow="Scenario simulation" title="Consequence simulation">
@@ -1206,6 +1611,63 @@ function SimulationSection({
         {running && <div className="mt-1"><LoadingRow>Running simulation…</LoadingRow></div>}
         {!running && latest && <SimulationResult simulation={latest} />}
       </div>
+
+      {comparableScenarios.length > 1 && (
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+            Scenario comparison — latest completed run per scenario
+          </p>
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-sm min-w-[440px]">
+              <thead>
+                <tr className="text-left text-xs text-slate-400">
+                  <th className="font-medium pb-1.5 px-1">Scenario</th>
+                  <th className="font-medium pb-1.5 px-1 text-right">Failed Δ</th>
+                  <th className="font-medium pb-1.5 px-1 text-right">Recovery</th>
+                  <th className="font-medium pb-1.5 px-1 text-right">Exposure</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {comparableScenarios.map((scenario) => {
+                  const sim = latestByScenario.get(scenario)!;
+                  const result = "delta" in sim.result ? sim.result : null;
+                  return (
+                    <tr key={scenario} className={sim.id === latest?.id ? "bg-sky-50/60" : undefined}>
+                      <td className="py-1.5 px-1 text-slate-900 font-medium">
+                        {SCENARIO_LABELS[scenario]}
+                        {sim.id === latest?.id && (
+                          <span className="ml-1.5 text-sky-600 text-xs font-normal">latest</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 px-1 text-right tabular-nums text-slate-700">
+                        {result ? result.delta.failed_event_count_delta : "—"}
+                      </td>
+                      <td className="py-1.5 px-1 text-right tabular-nums text-slate-700">
+                        {result && result.estimated_recovery_by_currency.length > 0
+                          ? result.estimated_recovery_by_currency
+                              .map((item) => `${item.amount} ${item.currency}`)
+                              .join(", ")
+                          : "—"}
+                      </td>
+                      <td className="py-1.5 px-1 text-right tabular-nums text-slate-700">
+                        {result && result.projected.exposure_by_currency.length > 0
+                          ? result.projected.exposure_by_currency
+                              .map((item) => `${item.amount} ${item.currency}`)
+                              .join(", ")
+                          : "—"}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-slate-400 mt-2">
+            Run decision evaluation below to have FIN-SCOPE deterministically pick and authorize
+            one of these scenarios — this table is a comparison, not a recommendation.
+          </p>
+        </div>
+      )}
 
       {history.length > 0 && (
         <div className="mt-5 pt-4 border-t border-slate-100">
@@ -1499,33 +1961,62 @@ function DecisionResult({ decision }: { decision: Decision }) {
         </div>
       </div>
 
-      <div className="border border-slate-200 rounded-lg p-3">
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <Badge variant="decision">DECISION</Badge>
-          <span className="text-sm font-semibold text-slate-900">
-            Preferred: {SCENARIO_LABELS[evaluation.preferred_scenario]}
-          </span>
-        </div>
-        <p className="text-xs text-slate-500 mt-1.5">{evaluation.reason}</p>
-      </div>
-
-      {policyCopy && (
-        <div className="border border-slate-200 rounded-lg p-3">
+      <div className="grid sm:grid-cols-2 gap-3">
+        <div className="border border-slate-200 border-l-2 border-l-sky-400 rounded-lg p-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1.5">
+            Recommendation
+          </p>
           <div className="flex items-center gap-1.5 flex-wrap">
-            <Badge variant="neutral">POLICY</Badge>
-            <Badge variant={policyCopy.variant}>{policyCopy.label}</Badge>
+            <Badge variant="decision">DECISION</Badge>
+            <span className="text-sm font-semibold text-slate-900">
+              {SCENARIO_LABELS[evaluation.preferred_scenario]}
+            </span>
           </div>
-          {decision.policy_reasons.length > 0 && (
-            <ul className="mt-2 space-y-1">
-              {decision.policy_reasons.map((reason) => (
-                <li key={reason} className="text-xs text-slate-500">
-                  {reason}
-                </li>
-              ))}
-            </ul>
+          <p className="text-xs text-slate-500 mt-1.5">{evaluation.reason}</p>
+          <p className="text-[11px] text-slate-400 mt-2 italic">
+            A deterministic comparison, not an approval to act — see Authorization.
+          </p>
+        </div>
+
+        <div
+          className={`border border-slate-200 rounded-lg p-3 border-l-2 ${
+            !policyCopy
+              ? "border-l-slate-200"
+              : policyCopy.variant === "allowed"
+                ? "border-l-emerald-400"
+                : policyCopy.variant === "requires_approval"
+                  ? "border-l-amber-400"
+                  : "border-l-red-400"
+          }`}
+        >
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1.5">
+            Authorization
+          </p>
+          {policyCopy ? (
+            <>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge variant="neutral">POLICY</Badge>
+                <Badge variant={policyCopy.variant}>{policyCopy.label}</Badge>
+              </div>
+              {decision.policy_reasons.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {decision.policy_reasons.map((reason) => (
+                    <li key={reason} className="text-xs text-slate-500">
+                      {reason}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-[11px] text-slate-400 mt-2 italic">
+                The only field that gates whether FIN-SCOPE may act — evaluated independently of
+                the recommendation.
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-slate-400">No policy result for this decision.</p>
           )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1697,7 +2188,7 @@ function ActionResult({ action }: { action: Action }) {
       </div>
 
       {result && (
-        <div className="border border-slate-200 rounded-lg p-3 space-y-2">
+        <div className="border border-slate-200 border-l-2 border-l-teal-400 rounded-lg p-3 space-y-2">
           <div className="flex justify-between gap-4 text-sm">
             <span className="text-slate-500">Targeted events</span>
             <span className="text-slate-900 font-medium tabular-nums">
@@ -2009,6 +2500,464 @@ function VerificationResult({ verification }: { verification: Verification }) {
 
       <p className="text-xs font-medium text-fuchsia-700">
         Deterministic comparison only — no financial data mutated, no external systems contacted.
+      </p>
+    </div>
+  );
+}
+function RazorpayActionSection({
+  latestDecision,
+  razorpayActionForDecision,
+  razorpayActionForDecisionLoaded,
+  razorpayActionsHistory,
+  razorpayActionsLoaded,
+  running,
+  error,
+  onRun,
+}: {
+  latestDecision: Decision | null;
+  razorpayActionForDecision: RazorpayAction | null;
+  razorpayActionForDecisionLoaded: boolean;
+  razorpayActionsHistory: RazorpayAction[];
+  razorpayActionsLoaded: boolean;
+  running: boolean;
+  error: string | null;
+  onRun: () => void;
+}) {
+  const history = razorpayActionForDecision
+    ? razorpayActionsHistory.filter((a) => a.id !== razorpayActionForDecision.id)
+    : razorpayActionsHistory;
+
+  const decisionIsExecutable =
+    !!latestDecision &&
+    latestDecision.status === "completed" &&
+    latestDecision.policy_decision === "ALLOWED";
+
+  return (
+    <Card className="p-4 border-l-2 border-l-orange-300">
+      <SectionHeading eyebrow="Policy-authorized, REAL Razorpay TEST API" title="Razorpay TEST action">
+        <Badge variant="razorpay">RAZORPAY TEST</Badge>
+      </SectionHeading>
+      <p className="text-xs text-slate-400 mt-2">
+        Only an ALLOWED, persisted Phase 6 decision may trigger this -- the exact same
+        authorization Sandbox action above reads. Unlike Sandbox action, this makes a REAL network
+        call to Razorpay&apos;s TEST API and creates a genuine, independent Razorpay TEST Order.
+        It is never a retry of any specific existing payment, never contacts production Razorpay,
+        and never runs unless a TEST-mode client is configured server-side.
+      </p>
+
+      <div className="mt-4">
+        {!latestDecision && (
+          <EmptyState>
+            No decision has been evaluated for this investigation yet — run decision evaluation
+            above before a Razorpay TEST action can be authorized.
+          </EmptyState>
+        )}
+
+        {latestDecision && latestDecision.status !== "completed" && (
+          <EmptyState>
+            The latest decision has no eligible scenario to act on ({decisionSummaryLabel(latestDecision)}).
+          </EmptyState>
+        )}
+
+        {latestDecision &&
+          latestDecision.status === "completed" &&
+          latestDecision.policy_decision !== "ALLOWED" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge variant="neutral">POLICY</Badge>
+                {latestDecision.policy_decision && (
+                  <Badge variant={POLICY_COPY[latestDecision.policy_decision].variant}>
+                    {POLICY_COPY[latestDecision.policy_decision].label}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-sm text-slate-600">
+                The preferred scenario ({decisionSummaryLabel(latestDecision)}) is not authorized
+                for a Razorpay TEST action.
+              </p>
+            </div>
+          )}
+
+        {decisionIsExecutable && (
+          <Button variant="secondary" onClick={onRun} disabled={running}>
+            {running
+              ? "Calling Razorpay TEST API…"
+              : razorpayActionForDecision
+                ? "Re-run Razorpay TEST action"
+                : "Create Razorpay TEST order"}
+          </Button>
+        )}
+      </div>
+
+      {error && (
+        <div className="mt-3">
+          <ErrorText>{error}</ErrorText>
+        </div>
+      )}
+
+      {decisionIsExecutable && (
+        <div className="mt-4">
+          {!razorpayActionForDecisionLoaded && <LoadingRow>Loading Razorpay TEST action…</LoadingRow>}
+          {running && (
+            <div className="mt-1">
+              <LoadingRow>Calling Razorpay TEST API…</LoadingRow>
+            </div>
+          )}
+          {!running && razorpayActionForDecisionLoaded && razorpayActionForDecision && (
+            <RazorpayActionResult action={razorpayActionForDecision} />
+          )}
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+            Razorpay TEST action history
+          </p>
+          {!razorpayActionsLoaded && <LoadingRow>Loading Razorpay TEST action history…</LoadingRow>}
+          <ul className="divide-y divide-slate-100">
+            {history.map((action) => (
+              <li key={action.id} className="py-2 flex items-center justify-between text-xs gap-2">
+                <span className="text-slate-700 font-medium">
+                  {action.scenario ? SCENARIO_LABELS[action.scenario] : "—"}
+                </span>
+                <Badge variant={RAZORPAY_ACTION_STATUS_COPY[action.status].variant}>
+                  {RAZORPAY_ACTION_STATUS_COPY[action.status].label}
+                </Badge>
+                <span className="text-slate-400 font-mono">
+                  {new Date(action.created_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function RazorpayActionResult({ action }: { action: RazorpayAction }) {
+  const statusCopy = RAZORPAY_ACTION_STATUS_COPY[action.status];
+
+  if (action.status !== "executed") {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <Badge variant="razorpay">RAZORPAY TEST</Badge>
+          <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+        </div>
+        <p className="text-sm text-slate-600">
+          {action.status === "rejected"
+            ? (action.rejection_reason ?? "The Razorpay TEST action was rejected.")
+            : "This Razorpay TEST action is still pending -- the real network call has not yet resolved."}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <Badge variant="razorpay">RAZORPAY TEST</Badge>
+        <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+      </div>
+
+      <div className="border border-slate-200 border-l-2 border-l-orange-400 rounded-lg p-3 space-y-2">
+        <div className="flex justify-between gap-4 text-sm">
+          <span className="text-slate-500">Razorpay order ID</span>
+          <span className="text-slate-900 font-mono text-xs text-right break-all">
+            {action.razorpay_order_id ?? "—"}
+          </span>
+        </div>
+        {action.razorpay_receipt && (
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Receipt</span>
+            <span className="text-slate-900 font-mono text-xs text-right break-all">
+              {action.razorpay_receipt}
+            </span>
+          </div>
+        )}
+        <div className="flex justify-between gap-4 text-sm">
+          <span className="text-slate-500">Executor version</span>
+          <span className="text-slate-900 font-mono text-xs">{action.executor_version}</span>
+        </div>
+      </div>
+
+      <p className="text-xs font-medium text-orange-700">
+        A NEW, independent Razorpay TEST Order — never a retry of an existing payment, and never
+        production money movement.
+      </p>
+    </div>
+  );
+}
+
+function RazorpayVerificationSection({
+  latestAction,
+  verificationForAction,
+  verificationForActionLoaded,
+  verificationsHistory,
+  verificationsLoaded,
+  running,
+  error,
+  onRun,
+}: {
+  latestAction: RazorpayAction | null;
+  verificationForAction: RazorpayVerification | null;
+  verificationForActionLoaded: boolean;
+  verificationsHistory: RazorpayVerification[];
+  verificationsLoaded: boolean;
+  running: boolean;
+  error: string | null;
+  onRun: () => void;
+}) {
+  const history = verificationForAction
+    ? verificationsHistory.filter((v) => v.id !== verificationForAction.id)
+    : verificationsHistory;
+
+  const actionIsVerifiable = !!latestAction && latestAction.status === "executed";
+
+  return (
+    <Card className="p-4 border-l-2 border-l-orange-300">
+      <SectionHeading
+        eyebrow="Deterministic, expected vs. real webhook observation"
+        title="Razorpay TEST outcome verification"
+      >
+        <Badge variant="razorpay">RAZORPAY TEST</Badge>
+      </SectionHeading>
+      <p className="text-xs text-slate-400 mt-2">
+        Only an executed, persisted Razorpay TEST action may be verified. EXPECTED is re-derived
+        from the same Phase 5 projection Phase 8 uses; OBSERVED comes only from a real,
+        already-ingested Razorpay webhook event for this Order -- never from a sandbox result,
+        never from Phase 5, and never fabricated when no webhook has arrived yet.
+      </p>
+
+      <div className="mt-4">
+        {!latestAction && (
+          <EmptyState>
+            No Razorpay TEST action has been executed for this investigation yet — create one
+            above before its outcome can be verified.
+          </EmptyState>
+        )}
+
+        {latestAction && latestAction.status !== "executed" && (
+          <EmptyState>
+            The latest Razorpay TEST action was not executed — there is nothing to verify yet.
+          </EmptyState>
+        )}
+
+        {actionIsVerifiable && (
+          <Button variant="secondary" onClick={onRun} disabled={running}>
+            {running
+              ? "Verifying…"
+              : verificationForAction
+                ? "Re-run verification"
+                : "Verify Razorpay TEST outcome"}
+          </Button>
+        )}
+      </div>
+
+      {error && (
+        <div className="mt-3">
+          <ErrorText>{error}</ErrorText>
+        </div>
+      )}
+
+      {actionIsVerifiable && (
+        <div className="mt-4">
+          {!verificationForActionLoaded && <LoadingRow>Loading Razorpay TEST verification…</LoadingRow>}
+          {running && (
+            <div className="mt-1">
+              <LoadingRow>Verifying…</LoadingRow>
+            </div>
+          )}
+          {!running && verificationForActionLoaded && verificationForAction && (
+            <RazorpayVerificationResult verification={verificationForAction} />
+          )}
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <div className="mt-5 pt-4 border-t border-slate-100">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+            Verification history
+          </p>
+          {!verificationsLoaded && <LoadingRow>Loading verification history…</LoadingRow>}
+          <ul className="divide-y divide-slate-100">
+            {history.map((verification) => (
+              <li
+                key={verification.id}
+                className="py-2 flex items-center justify-between text-xs gap-2"
+              >
+                <Badge variant={VERIFICATION_STATUS_COPY[verification.status].variant}>
+                  {VERIFICATION_STATUS_COPY[verification.status].label}
+                </Badge>
+                <span className="text-slate-400 font-mono">
+                  {new Date(verification.created_at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function RazorpayVerificationResult({ verification }: { verification: RazorpayVerification }) {
+  const statusCopy = VERIFICATION_STATUS_COPY[verification.status];
+  const expected = verification.expected_snapshot;
+  const observed = verification.observed_snapshot;
+  const dimensions =
+    "success_count" in verification.comparison.dimensions
+      ? verification.comparison.dimensions
+      : null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <Badge variant="razorpay">RAZORPAY TEST</Badge>
+        <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
+      </div>
+
+      {verification.status === "INSUFFICIENT_OBSERVATION" && (
+        <p className="text-sm text-slate-600">
+          {!expected.available
+            ? expected.reason
+            : !observed.available
+              ? observed.reason
+              : "Insufficient observation to verify this outcome."}
+        </p>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="border border-purple-200 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <Badge variant="projected">PROJECTED</Badge>
+            <span className="text-xs font-medium text-slate-500">Expected</span>
+          </div>
+          {expected.available ? (
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Eligible events</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {expected.eligible_event_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Projected success</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {expected.projected_success_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Projected failure</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {expected.projected_failure_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Estimated recovery</dt>
+                <dd className="text-slate-900 tabular-nums text-right">
+                  {formatCurrencyAmounts(expected.estimated_recovery_by_currency)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Projected exposure</dt>
+                <dd className="text-slate-900 tabular-nums text-right">
+                  {formatCurrencyAmounts(expected.projected_exposure_by_currency)}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-xs text-slate-500">{expected.reason}</p>
+          )}
+        </div>
+
+        <div className="border border-orange-200 rounded-lg p-3 space-y-2">
+          <div className="flex items-center gap-1.5">
+            <Badge variant="razorpay">RAZORPAY TEST</Badge>
+            <span className="text-xs font-medium text-slate-500">Observed (real webhook)</span>
+          </div>
+          {observed.available ? (
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Observed success</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {observed.observed_success_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Observed failure</dt>
+                <dd className="text-slate-900 font-medium tabular-nums">
+                  {observed.observed_failure_count ?? "—"}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Observed recovery</dt>
+                <dd className="text-slate-900 tabular-nums text-right">
+                  {formatCurrencyAmounts(observed.observed_recovery_by_currency)}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-4">
+                <dt className="text-slate-500">Observation source</dt>
+                <dd className="text-slate-900 text-xs text-right">
+                  {observed.observation_event_type} ({observed.observation_source})
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-xs text-slate-500">{observed.reason}</p>
+          )}
+        </div>
+      </div>
+
+      {dimensions && (
+        <div className="border border-slate-200 rounded-lg p-3 space-y-2">
+          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+            Dimension comparison
+          </p>
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Success count</span>
+            <span
+              className={`font-medium tabular-nums ${dimensions.success_count.match ? "text-emerald-700" : "text-red-600"}`}
+            >
+              {dimensions.success_count.expected ?? "—"} vs {dimensions.success_count.observed ?? "—"}
+              {dimensions.success_count.match ? " (match)" : " (mismatch)"}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Failure count</span>
+            <span
+              className={`font-medium tabular-nums ${dimensions.failure_count.match ? "text-emerald-700" : "text-red-600"}`}
+            >
+              {dimensions.failure_count.expected ?? "—"} vs {dimensions.failure_count.observed ?? "—"}
+              {dimensions.failure_count.match ? " (match)" : " (mismatch)"}
+            </span>
+          </div>
+          <div className="flex justify-between gap-4 text-sm">
+            <span className="text-slate-500">Recovery by currency</span>
+            <span
+              className={`font-medium text-right ${dimensions.recovery_by_currency.match ? "text-emerald-700" : "text-red-600"}`}
+            >
+              {dimensions.recovery_by_currency.match ? "match" : "mismatch"}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {verification.comparison.reasons.length > 0 && (
+        <ul className="space-y-1">
+          {verification.comparison.reasons.map((reason) => (
+            <li key={reason} className="text-xs text-slate-500">
+              {reason}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <p className="text-xs font-medium text-orange-700">
+        Real Razorpay TEST API — deterministic comparison only, no financial data mutated. Still
+        TEST mode, never production money movement.
       </p>
     </div>
   );
