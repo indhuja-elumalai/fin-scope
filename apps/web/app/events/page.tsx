@@ -10,9 +10,13 @@ import {
   ErrorText,
   Input,
   Label,
+  Led,
   LoadingRow,
+  PageHeader,
+  SectionHeading,
   Select,
   SuccessText,
+  Telemetry,
 } from "@/components/ui";
 
 // Mirrors app.domain.events.KNOWN_EVENT_TYPES on the backend. Phase 2 keeps
@@ -198,16 +202,17 @@ export default function EventsPage() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto px-6 py-10">
-      <h1 className="text-xl font-semibold text-slate-900">Financial events</h1>
-      <p className="text-sm text-slate-500 mt-1">
-        Ingest and inspect financial events through the real API and database.
-      </p>
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-10">
+      <PageHeader
+        eyebrow="SYS://fin-scope/events"
+        title="Financial events"
+        description="Ingest and inspect financial events through the real API and database. Re-sending an external reference is an idempotent replay."
+      />
 
-      <Card className="mt-8 p-5">
-        <form onSubmit={handleCreate} className="space-y-4">
-          <h2 className="font-medium text-sm text-slate-900">Ingest event</h2>
-          <div className="grid sm:grid-cols-2 gap-4">
+      <div className="grid lg:grid-cols-[380px_1fr] gap-6 mt-8 items-start">
+        <Card className="p-5 lg:sticky lg:top-20">
+          <form onSubmit={handleCreate} className="space-y-4">
+            <SectionHeading eyebrow="Ingest" title="Push event" />
             <div>
               <Label htmlFor="event-merchant">Merchant</Label>
               <Select
@@ -247,16 +252,43 @@ export default function EventsPage() {
                 ))}
               </Select>
             </div>
-            <div>
-              <Label htmlFor="event-source">Source</Label>
-              <Input
-                id="event-source"
-                value={form.source}
-                onChange={(e) => setForm({ ...form, source: e.target.value })}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="event-source">Source</Label>
+                <Input
+                  id="event-source"
+                  value={form.source}
+                  onChange={(e) => setForm({ ...form, source: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="event-status">Status</Label>
+                <Input
+                  id="event-status"
+                  value={form.status}
+                  onChange={(e) => setForm({ ...form, status: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="event-amount">Amount</Label>
+                <Input
+                  id="event-amount"
+                  value={form.amount}
+                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="event-currency">Currency</Label>
+                <Input
+                  id="event-currency"
+                  value={form.currency}
+                  maxLength={3}
+                  onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
+                />
+              </div>
             </div>
             <div>
-              <Label htmlFor="event-external-reference">External reference (optional)</Label>
+              <Label htmlFor="event-external-reference">External reference · optional</Label>
               <Input
                 id="event-external-reference"
                 value={form.external_reference}
@@ -265,32 +297,7 @@ export default function EventsPage() {
               />
             </div>
             <div>
-              <Label htmlFor="event-amount">Amount (optional)</Label>
-              <Input
-                id="event-amount"
-                value={form.amount}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
-              />
-            </div>
-            <div>
-              <Label htmlFor="event-currency">Currency (optional)</Label>
-              <Input
-                id="event-currency"
-                value={form.currency}
-                maxLength={3}
-                onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
-              />
-            </div>
-            <div>
-              <Label htmlFor="event-status">Status (optional)</Label>
-              <Input
-                id="event-status"
-                value={form.status}
-                onChange={(e) => setForm({ ...form, status: e.target.value })}
-              />
-            </div>
-            <div>
-              <Label htmlFor="event-occurred-at">Occurred at (optional, defaults to now)</Label>
+              <Label htmlFor="event-occurred-at">Occurred at · defaults to now</Label>
               <Input
                 id="event-occurred-at"
                 type="datetime-local"
@@ -298,91 +305,124 @@ export default function EventsPage() {
                 onChange={(e) => setForm({ ...form, occurred_at: e.target.value })}
               />
             </div>
-          </div>
-          <Button type="submit" disabled={submitting || !form.merchant_id}>
-            {submitting ? "Ingesting…" : "Ingest event"}
-          </Button>
-          {submitError && <ErrorText>{submitError}</ErrorText>}
-          {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
-        </form>
-      </Card>
+            <Button type="submit" className="w-full" disabled={submitting || !form.merchant_id}>
+              {submitting ? "Ingesting…" : "↥ Ingest event"}
+            </Button>
+            {submitError && <ErrorText>{submitError}</ErrorText>}
+            {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
+          </form>
+        </Card>
 
-      <div className="mt-8">
-        <div className="flex gap-4 items-end mb-3">
-          <div>
-            <Label htmlFor="filter-merchant">Filter by merchant</Label>
-            <Select
-              id="filter-merchant"
-              value={filterMerchant}
-              onChange={(e) => handleFilterMerchantChange(e.target.value)}
-              className="min-w-[12rem]"
-            >
-              <option value="">All merchants</option>
-              {merchants.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </Select>
+        <div className="min-w-0">
+          <div className="flex gap-3 items-end mb-4 flex-wrap">
+            <div>
+              <Label htmlFor="filter-merchant">Filter by merchant</Label>
+              <Select
+                id="filter-merchant"
+                value={filterMerchant}
+                onChange={(e) => handleFilterMerchantChange(e.target.value)}
+                className="min-w-[12rem]"
+              >
+                <option value="">All merchants</option>
+                {merchants.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="filter-type">Filter by type</Label>
+              <Select
+                id="filter-type"
+                value={filterType}
+                onChange={(e) => handleFilterTypeChange(e.target.value)}
+                className="min-w-[10rem]"
+              >
+                <option value="">All types</option>
+                {EVENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <span className="ml-auto pb-3 font-mono text-[10.5px] uppercase tracking-[0.12em] text-slate-500 tabular-nums">
+              <span className="text-slate-900">{total}</span> total
+            </span>
           </div>
-          <div>
-            <Label htmlFor="filter-type">Filter by type</Label>
-            <Select
-              id="filter-type"
-              value={filterType}
-              onChange={(e) => handleFilterTypeChange(e.target.value)}
-              className="min-w-[10rem]"
-            >
-              <option value="">All types</option>
-              {EVENT_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <span className="text-xs text-slate-400 pb-2">{total} total</span>
+
+          {loading && (
+            <Card className="p-5">
+              <LoadingRow>Streaming events</LoadingRow>
+            </Card>
+          )}
+          {error && <ErrorText>{error}</ErrorText>}
+          {!loading && !error && events.length === 0 && (
+            <EmptyState>No events match these filters.</EmptyState>
+          )}
+          {!loading && events.length > 0 && (
+            <Card>
+              <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between">
+                <Telemetry slashes>Event stream</Telemetry>
+                <span className="flex items-center gap-3 font-mono text-[10px] uppercase tracking-[0.12em] text-slate-400">
+                  <span className="flex items-center gap-1.5">
+                    <Led tone="warn" /> Concerning
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Led tone="ok" /> Nominal
+                  </span>
+                </span>
+              </div>
+              <ul className="divide-y divide-slate-100">
+                {events.map((ev) => {
+                  const concerning = CONCERNING_TYPES.has(ev.event_type);
+                  return (
+                    <li key={ev.id}>
+                      <Link
+                        href={`/events/${ev.id}`}
+                        className="group px-4 py-3.5 flex justify-between items-center gap-4 hover:bg-sky-50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Led tone={concerning ? "warn" : "ok"} />
+                          <div className="min-w-0">
+                            <div
+                              className={`font-mono text-[13px] truncate ${
+                                concerning ? "text-amber-700" : "text-slate-900"
+                              }`}
+                            >
+                              {ev.event_type}
+                            </div>
+                            <div className="font-mono text-[11px] text-slate-400 mt-0.5">
+                              {ev.source} · {new Date(ev.occurred_at).toLocaleString()}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="font-mono text-[13px] tabular-nums text-slate-900">
+                            {ev.amount ? (
+                              <>
+                                {ev.amount}{" "}
+                                <span className="text-slate-400 text-[11px]">
+                                  {ev.currency ?? ""}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </span>
+                          <span className="text-[var(--accent)] opacity-0 group-hover:opacity-100 transition-opacity">
+                            →
+                          </span>
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
+          )}
         </div>
-
-        {loading && <LoadingRow>Loading events…</LoadingRow>}
-        {error && <ErrorText>{error}</ErrorText>}
-        {!loading && !error && events.length === 0 && (
-          <EmptyState>No events match these filters.</EmptyState>
-        )}
-        {!loading && events.length > 0 && (
-          <Card>
-            <ul className="divide-y divide-slate-100">
-              {events.map((ev) => (
-                <li key={ev.id}>
-                  <Link
-                    href={`/events/${ev.id}`}
-                    className="px-4 py-3.5 flex justify-between items-center gap-4 hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span
-                        className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
-                          CONCERNING_TYPES.has(ev.event_type) ? "bg-amber-500" : "bg-emerald-500"
-                        }`}
-                        aria-hidden="true"
-                      />
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-slate-900 truncate">
-                          {ev.event_type}
-                        </div>
-                        <div className="text-slate-400 text-xs mt-0.5">
-                          {ev.source} · {new Date(ev.occurred_at).toLocaleString()}
-                        </div>
-                      </div>
-                    </div>
-                    <span className="text-slate-500 text-xs tabular-nums shrink-0">
-                      {ev.amount ? `${ev.amount} ${ev.currency ?? ""}` : "—"}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
       </div>
     </main>
   );

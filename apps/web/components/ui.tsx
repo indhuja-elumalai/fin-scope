@@ -5,6 +5,10 @@
 // investigations) already repeats -- cards, badges, buttons, form fields,
 // empty states -- pulled into one place so they stay visually consistent
 // and a future page does not reinvent (or subtly drift from) them.
+//
+// Visual language ("machine console"): bracketed HUD panels, chamfered
+// controls, mono telemetry labels and status LEDs. The HUD classes
+// (.hud-panel, .chamfer, .telemetry, .led) live in app/globals.css.
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -19,13 +23,47 @@ export function Card({
   children: ReactNode;
   className?: string;
 }) {
+  return <div className={`hud-panel ${className}`}>{children}</div>;
+}
+
+// Mono uppercase micro-label. `slashes` prefixes the "//" console marker.
+export function Telemetry({
+  children,
+  className = "",
+  slashes = false,
+}: {
+  children: ReactNode;
+  className?: string;
+  slashes?: boolean;
+}) {
   return (
-    <div
-      className={`bg-white border border-slate-200 rounded-xl shadow-sm ${className}`}
-    >
+    <span className={`telemetry text-slate-400 ${className}`}>
+      {slashes && (
+        <span className="text-[var(--accent)] mr-1.5" aria-hidden="true">
+          {"//"}
+        </span>
+      )}
       {children}
-    </div>
+    </span>
   );
+}
+
+export function Led({
+  tone = "neutral",
+  pulse = false,
+}: {
+  tone?: "ok" | "warn" | "danger" | "accent" | "ai" | "neutral";
+  pulse?: boolean;
+}) {
+  const color = {
+    ok: "text-emerald-400",
+    warn: "text-amber-400",
+    danger: "text-red-400",
+    accent: "text-sky-400",
+    ai: "text-indigo-400",
+    neutral: "text-slate-400",
+  }[tone];
+  return <span className={`led ${color} ${pulse ? "led-pulse" : ""}`} aria-hidden="true" />;
 }
 
 export function SectionHeading({
@@ -38,16 +76,18 @@ export function SectionHeading({
   children?: ReactNode;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-4 flex-wrap">
+    <div className="flex items-start justify-between gap-4 flex-wrap pb-3 mb-1 border-b border-dashed border-slate-200">
       <div>
         {eyebrow && (
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-0.5">
-            {eyebrow}
+          <p className="mb-1">
+            <Telemetry slashes>{eyebrow}</Telemetry>
           </p>
         )}
-        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        <h2 className="font-[family-name:var(--font-display)] text-base font-semibold tracking-wide text-slate-900 uppercase">
+          {title}
+        </h2>
       </div>
-      {children}
+      {children && <div className="flex items-center gap-2">{children}</div>}
     </div>
   );
 }
@@ -55,17 +95,17 @@ export function SectionHeading({
 const BADGE_VARIANTS = {
   // FACT / INFERENCE / UNCERTAINTY -- the core distinction Phase 4 must
   // keep visible everywhere it applies (see README section 5).
-  fact: "bg-slate-100 text-slate-700 border-slate-200",
+  fact: "bg-slate-100 text-slate-700 border-slate-300",
   inference: "bg-indigo-50 text-indigo-700 border-indigo-200",
   uncertainty: "bg-amber-50 text-amber-800 border-amber-200",
   // Outcome/status colors.
   success: "bg-emerald-50 text-emerald-700 border-emerald-200",
   danger: "bg-red-50 text-red-700 border-red-200",
-  neutral: "bg-slate-100 text-slate-600 border-slate-200",
+  neutral: "bg-slate-100 text-slate-600 border-slate-300",
   // Confidence levels -- a bounded qualitative label, never a probability.
   high: "bg-emerald-50 text-emerald-700 border-emerald-200",
   medium: "bg-amber-50 text-amber-800 border-amber-200",
-  low: "bg-slate-100 text-slate-600 border-slate-200",
+  low: "bg-slate-100 text-slate-600 border-slate-300",
   // Phase 5 (deterministic simulation): a projected/simulated number is
   // visually distinct from both FACT and INFERENCE -- it is neither an
   // observed fact nor an AI judgment, it is a deterministic calculation
@@ -111,8 +151,9 @@ export function Badge({
 }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${BADGE_VARIANTS[variant]}`}
+      className={`chamfer-sm inline-flex items-center gap-1.5 border px-2 py-[3px] font-mono text-[10.5px] font-medium uppercase tracking-[0.1em] leading-none whitespace-nowrap ${BADGE_VARIANTS[variant]}`}
     >
+      <span className="w-1 h-1 bg-current opacity-80" aria-hidden="true" />
       {children}
     </span>
   );
@@ -126,12 +167,13 @@ export function Button({
   variant?: "primary" | "secondary" | "ghost";
 }) {
   const base =
-    "inline-flex items-center justify-center gap-1.5 rounded-lg text-sm font-medium px-4 py-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed";
+    "chamfer relative inline-flex items-center justify-center gap-2 font-mono text-xs font-semibold uppercase tracking-[0.12em] px-5 py-2.5 transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none cursor-pointer";
   const variants = {
-    primary: "bg-slate-900 text-white hover:bg-slate-800",
+    primary:
+      "bg-[var(--accent)] text-[#031018] hover:bg-[#7cefff] shadow-[0_0_24px_-4px_var(--accent-glow)] hover:shadow-[0_0_32px_-2px_var(--accent-glow)] active:translate-y-px",
     secondary:
-      "bg-white text-slate-700 border border-slate-300 hover:bg-slate-50",
-    ghost: "text-slate-600 hover:bg-slate-100",
+      "bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 hover:border-sky-300",
+    ghost: "text-slate-600 hover:text-slate-900 hover:bg-slate-100",
   };
   return <button className={`${base} ${variants[variant]} ${className}`} {...props} />;
 }
@@ -144,16 +186,16 @@ export function Label({
   htmlFor: string;
 }) {
   return (
-    <label htmlFor={htmlFor} className="block text-sm font-medium text-slate-700 mb-1">
+    <label htmlFor={htmlFor} className="telemetry block text-slate-500 mb-1.5">
       {children}
     </label>
   );
 }
 
 const FIELD_CLASSES =
-  "w-full border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-900 bg-white " +
-  "transition-shadow placeholder:text-slate-400 " +
-  "hover:border-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none";
+  "w-full border border-slate-300 bg-[#070c12] px-3 py-2.5 text-sm font-mono text-slate-900 " +
+  "transition-[border-color,box-shadow] placeholder:text-slate-400 " +
+  "hover:border-slate-400 focus:border-[var(--accent)] focus:shadow-[0_0_0_3px_rgb(45_226_255/0.12),0_0_18px_-6px_var(--accent-glow)] outline-none";
 
 export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
   const { className = "", ...rest } = props;
@@ -167,7 +209,10 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
 
 export function EmptyState({ children }: { children: ReactNode }) {
   return (
-    <div className="text-center py-10 px-4 border border-dashed border-slate-200 rounded-lg">
+    <div className="relative text-center py-12 px-4 border border-dashed border-slate-300 bg-[repeating-linear-gradient(135deg,transparent_0,transparent_8px,rgb(255_255_255/0.015)_8px,rgb(255_255_255/0.015)_16px)]">
+      <p className="telemetry text-slate-400 mb-2">
+        <span className="text-amber-400">■</span> No signal
+      </p>
       <p className="text-sm text-slate-500">{children}</p>
     </div>
   );
@@ -176,89 +221,90 @@ export function EmptyState({ children }: { children: ReactNode }) {
 export function Spinner({ className = "" }: { className?: string }) {
   return (
     <svg
-      className={`animate-spin h-4 w-4 ${className}`}
+      className={`animate-spin h-4 w-4 text-[var(--accent)] ${className}`}
       viewBox="0 0 24 24"
       fill="none"
       aria-hidden="true"
     >
-      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-      <path
-        className="opacity-75"
-        fill="currentColor"
-        d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-      />
+      <circle className="opacity-20" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+      <path d="M12 3a9 9 0 0 1 9 9" stroke="currentColor" strokeWidth="2" strokeLinecap="square" />
     </svg>
   );
 }
 
 export function LoadingRow({ children = "Loading…" }: { children?: ReactNode }) {
   return (
-    <div className="flex items-center gap-2 text-sm text-slate-500 py-2">
+    <div className="flex items-center gap-2.5 py-2 font-mono text-xs uppercase tracking-[0.12em] text-slate-500">
       <Spinner />
-      <span>{children}</span>
+      <span className="cursor-blink">{children}</span>
     </div>
   );
 }
 
 export function ErrorText({ children }: { children: ReactNode }) {
   return (
-    <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-      {children}
+    <p className="flex items-start gap-2.5 text-sm text-red-700 bg-red-50 border border-red-200 border-l-2 border-l-red-400 px-3 py-2.5">
+      <span className="font-mono text-[10.5px] font-semibold tracking-[0.14em] text-red-400 pt-0.5 shrink-0">
+        ERR
+      </span>
+      <span>{children}</span>
     </p>
   );
 }
 
 export function SuccessText({ children }: { children: ReactNode }) {
   return (
-    <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-      {children}
+    <p className="flex items-start gap-2.5 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 border-l-2 border-l-emerald-400 px-3 py-2.5">
+      <span className="font-mono text-[10.5px] font-semibold tracking-[0.14em] text-emerald-400 pt-0.5 shrink-0">
+        OK
+      </span>
+      <span>{children}</span>
     </p>
   );
 }
 
 export function KeyValueRow({ label, value }: { label: ReactNode; value: ReactNode }) {
   return (
-    <div className="px-4 py-3 flex justify-between gap-4 text-sm">
-      <dt className="text-slate-500">{label}</dt>
-      <dd className="text-right text-slate-900 font-medium">{value}</dd>
+    <div className="px-4 py-3 flex justify-between items-baseline gap-4 text-sm">
+      <dt className="telemetry text-slate-400 shrink-0">{label}</dt>
+      <dd className="text-right text-slate-900 font-mono text-[13px] break-all">{value}</dd>
     </div>
   );
 }
 // --- Application shell / command-center primitives -------------------
-// Added for the product-ui-command-center pass. Deliberately still no new
-// dependency: plain Tailwind + the existing Badge/Card patterns above.
 
 export function EnvironmentBadge({
   health,
 }: {
   health: "checking" | "ok" | "degraded" | "unreachable";
 }) {
-  const dot =
+  const tone =
     health === "ok"
-      ? "bg-emerald-500"
+      ? "ok"
       : health === "degraded"
-        ? "bg-amber-500"
+        ? "warn"
         : health === "unreachable"
-          ? "bg-red-500"
-          : "bg-slate-300";
+          ? "danger"
+          : "neutral";
   const label =
     health === "ok"
-      ? "API reachable"
+      ? "API online"
       : health === "degraded"
         ? "API degraded"
         : health === "unreachable"
-          ? "API unreachable"
-          : "Checking API…";
+          ? "API offline"
+          : "Handshake…";
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-3">
       <span
-        className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-800"
+        className="chamfer-sm hidden sm:inline-flex items-center gap-1.5 border border-amber-200 bg-amber-50 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700"
         title="Razorpay TEST mode only -- this deployment has no production/live-money path (see README section 9)."
       >
-        Test environment
+        <span className="w-1 h-1 bg-current" aria-hidden="true" />
+        Test env
       </span>
-      <span className="flex items-center gap-1.5 text-xs text-slate-500">
-        <span className={`inline-block w-1.5 h-1.5 rounded-full ${dot}`} aria-hidden="true" />
+      <span className="flex items-center gap-2 font-mono text-[10.5px] uppercase tracking-[0.12em] text-slate-500">
+        <Led tone={tone} pulse={health === "ok" || health === "checking"} />
         <span className="sr-only sm:not-sr-only">{label}</span>
       </span>
     </div>
@@ -279,38 +325,50 @@ export type WorkflowStage = {
 // computes each stage's state from data it already fetched; this component
 // invents nothing and calls no endpoint.
 export function WorkflowStepper({ stages }: { stages: WorkflowStage[] }) {
+  const doneCount = stages.filter((s) => s.state === "done").length;
   return (
     <nav aria-label="Investigation workflow" className="overflow-x-auto">
+      <div className="flex items-center justify-between mb-3 min-w-max gap-6">
+        <Telemetry slashes>Control loop</Telemetry>
+        <span className="font-mono text-[10.5px] tracking-[0.12em] text-slate-500 tabular-nums">
+          {String(doneCount).padStart(2, "0")}/{String(stages.length).padStart(2, "0")} stages
+          complete
+        </span>
+      </div>
       <ol className="flex items-center gap-0 min-w-max">
         {stages.map((stage, i) => {
           const isLast = i === stages.length - 1;
-          const circle =
+          const node =
             stage.state === "done"
-              ? "bg-slate-900 border-slate-900 text-white"
+              ? "bg-sky-100 border-[var(--accent)] text-[var(--accent)] shadow-[0_0_14px_-2px_var(--accent-glow)]"
               : stage.state === "current"
-                ? "bg-white border-slate-900 text-slate-900"
+                ? "bg-transparent border-[var(--accent)] text-[var(--accent)] led-pulse"
                 : stage.state === "skipped"
-                  ? "bg-white border-slate-200 text-slate-300"
-                  : "bg-white border-slate-200 text-slate-400";
+                  ? "bg-transparent border-slate-200 text-slate-300"
+                  : "bg-transparent border-slate-300 border-dashed text-slate-400";
           const label =
             stage.state === "pending" || stage.state === "skipped"
               ? "text-slate-400"
-              : "text-slate-900 font-medium";
+              : "text-slate-900";
           const content = (
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex flex-col items-center gap-1.5 shrink-0 w-[72px]">
               <span
-                className={`flex items-center justify-center w-6 h-6 rounded-full border-2 text-[11px] font-semibold shrink-0 ${circle}`}
+                className={`chamfer-sm flex items-center justify-center w-8 h-8 border font-mono text-[11px] font-semibold shrink-0 ${node}`}
                 aria-hidden="true"
               >
-                {stage.state === "done" ? "✓" : i + 1}
+                {stage.state === "done" ? "✓" : String(i + 1).padStart(2, "0")}
               </span>
-              <span className={`text-xs whitespace-nowrap ${label}`}>{stage.label}</span>
+              <span
+                className={`font-mono text-[10px] uppercase tracking-[0.14em] whitespace-nowrap ${label}`}
+              >
+                {stage.label}
+              </span>
             </div>
           );
           return (
-            <li key={stage.key} className="flex items-center shrink-0">
+            <li key={stage.key} className="flex items-start shrink-0">
               {stage.href && stage.state !== "pending" ? (
-                <a href={stage.href} className="rounded hover:opacity-70 transition-opacity">
+                <a href={stage.href} className="hover:opacity-70 transition-opacity">
                   {content}
                 </a>
               ) : (
@@ -318,8 +376,10 @@ export function WorkflowStepper({ stages }: { stages: WorkflowStage[] }) {
               )}
               {!isLast && (
                 <span
-                  className={`w-6 sm:w-10 h-px mx-1.5 shrink-0 ${
-                    stage.state === "done" ? "bg-slate-900" : "bg-slate-200"
+                  className={`w-5 sm:w-8 h-px mt-4 shrink-0 ${
+                    stage.state === "done"
+                      ? "bg-[var(--accent)] shadow-[0_0_6px_var(--accent)]"
+                      : "bg-[repeating-linear-gradient(90deg,var(--border-strong)_0,var(--border-strong)_3px,transparent_3px,transparent_6px)]"
                   }`}
                   aria-hidden="true"
                 />
@@ -355,24 +415,30 @@ export function TimelineItem({
   tone?: "neutral" | "accent";
   id?: string;
 }) {
-  const dot = tone === "accent" ? "bg-blue-600" : "bg-slate-300";
+  const node =
+    tone === "accent"
+      ? "bg-[var(--accent)] border-[var(--accent)] shadow-[0_0_10px_var(--accent)]"
+      : "bg-[var(--background)] border-slate-400";
   return (
-    <li id={id} className="relative pl-6 pb-4 last:pb-0 scroll-mt-20">
+    <li
+      id={id}
+      className="relative pl-7 pb-4 last:pb-0 scroll-mt-24 target:[&>div]:text-[var(--accent)]"
+    >
       {!isLast && (
         <span
-          className="absolute left-[5px] top-3 bottom-0 w-px bg-slate-200"
+          className="absolute left-[4px] top-3.5 bottom-0 w-px bg-slate-300"
           aria-hidden="true"
         />
       )}
       <span
-        className={`absolute left-0 top-1.5 w-[11px] h-[11px] rounded-full ring-4 ring-white ${dot}`}
+        className={`absolute left-0 top-1.5 w-[9px] h-[9px] rotate-45 border ${node}`}
         aria-hidden="true"
       />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">{title}</div>
-        {trailing && <div className="shrink-0 text-right">{trailing}</div>}
+        {trailing && <div className="shrink-0 text-right font-mono">{trailing}</div>}
       </div>
-      {meta && <div className="text-xs text-slate-400 mt-0.5">{meta}</div>}
+      {meta && <div className="font-mono text-[11px] text-slate-400 mt-0.5">{meta}</div>}
     </li>
   );
 }
@@ -382,19 +448,42 @@ export function StatTile({
   value,
   hint,
   tone = "neutral",
+  index,
 }: {
   label: string;
   value: ReactNode;
   hint?: ReactNode;
   tone?: "neutral" | "danger" | "success";
+  index?: number;
 }) {
   const valueTone =
-    tone === "danger" ? "text-red-700" : tone === "success" ? "text-emerald-700" : "text-slate-900";
+    tone === "danger"
+      ? "text-red-500 [text-shadow:0_0_20px_rgb(255_77_94/0.45)]"
+      : tone === "success"
+        ? "text-emerald-500 [text-shadow:0_0_20px_rgb(46_229_157/0.4)]"
+        : "text-slate-900";
+  const bar =
+    tone === "danger" ? "bg-red-400" : tone === "success" ? "bg-emerald-400" : "bg-[var(--accent)]";
   return (
-    <Card className="p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">{label}</p>
-      <p className={`mt-1.5 text-2xl font-semibold tabular-nums ${valueTone}`}>{value}</p>
-      {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+    <Card className="p-4 overflow-hidden group">
+      <div className="flex items-center justify-between">
+        <Telemetry>{label}</Telemetry>
+        {index !== undefined && (
+          <span className="font-mono text-[10px] text-slate-300 tabular-nums">
+            {String(index).padStart(2, "0")}
+          </span>
+        )}
+      </div>
+      <p
+        className={`mt-3 font-[family-name:var(--font-display)] text-3xl font-semibold tabular-nums tracking-tight uppercase ${valueTone}`}
+      >
+        {value}
+      </p>
+      {hint && <p className="mt-1.5 text-xs text-slate-400">{hint}</p>}
+      <span
+        className={`absolute left-0 bottom-0 h-[2px] w-10 ${bar} opacity-80 transition-all duration-300 group-hover:w-full`}
+        aria-hidden="true"
+      />
     </Card>
   );
 }
@@ -411,17 +500,22 @@ export function PageHeader({
   children?: ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 flex-wrap">
-      <div>
+    <div className="boot-in flex items-end justify-between gap-4 flex-wrap">
+      <div className="min-w-0">
         {eyebrow && (
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1">
-            {eyebrow}
+          <p className="mb-2 flex items-center gap-2">
+            <span className="w-6 h-px bg-[var(--accent)]" aria-hidden="true" />
+            <Telemetry className="text-[var(--accent)]">{eyebrow}</Telemetry>
           </p>
         )}
-        <h1 className="text-xl font-semibold text-slate-900 tracking-tight">{title}</h1>
-        {description && <p className="text-sm text-slate-500 mt-1 max-w-2xl">{description}</p>}
+        <h1 className="font-[family-name:var(--font-display)] text-3xl sm:text-4xl font-semibold text-slate-900 tracking-tight uppercase">
+          {title}
+        </h1>
+        {description && (
+          <p className="text-sm text-slate-500 mt-2 max-w-2xl leading-relaxed">{description}</p>
+        )}
       </div>
-      {children && <div className="flex items-center gap-2 shrink-0">{children}</div>}
+      {children && <div className="flex items-center gap-3 shrink-0">{children}</div>}
     </div>
   );
 }

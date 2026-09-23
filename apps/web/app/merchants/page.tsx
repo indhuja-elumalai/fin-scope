@@ -3,6 +3,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 
 import {
+  Badge,
   Button,
   Card,
   EmptyState,
@@ -10,7 +11,10 @@ import {
   Input,
   Label,
   LoadingRow,
+  PageHeader,
+  SectionHeading,
   SuccessText,
+  Telemetry,
 } from "@/components/ui";
 
 type Merchant = {
@@ -100,64 +104,97 @@ export default function MerchantsPage() {
   }
 
   return (
-    <main className="max-w-2xl mx-auto px-6 py-10">
-      <h1 className="text-xl font-semibold text-slate-900">Merchants</h1>
-      <p className="text-sm text-slate-500 mt-1">
-        Merchants are the tenant boundary every financial event attaches to.
-      </p>
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-10">
+      <PageHeader
+        eyebrow="SYS://fin-scope/merchants"
+        title="Merchants"
+        description="Merchants are the tenant boundary every financial event attaches to."
+      />
 
-      <Card className="mt-8 p-5">
-        <form onSubmit={handleCreate} className="space-y-4">
-          <h2 className="font-medium text-sm text-slate-900">Create merchant</h2>
-          <div>
-            <Label htmlFor="merchant-name">Name</Label>
-            <Input
-              id="merchant-name"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div>
-            <Label htmlFor="merchant-segment">Segment (optional)</Label>
-            <Input
-              id="merchant-segment"
-              value={segment}
-              onChange={(e) => setSegment(e.target.value)}
-            />
-          </div>
-          <Button type="submit" disabled={submitting || !name}>
-            {submitting ? "Creating…" : "Create merchant"}
-          </Button>
-          {submitError && <ErrorText>{submitError}</ErrorText>}
-          {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
-        </form>
-      </Card>
+      <div className="grid lg:grid-cols-[340px_1fr] gap-6 mt-8 items-start">
+        <Card className="p-5 lg:sticky lg:top-20">
+          <form onSubmit={handleCreate} className="space-y-5">
+            <SectionHeading eyebrow="Register" title="New merchant" />
+            <div>
+              <Label htmlFor="merchant-name">Name</Label>
+              <Input
+                id="merchant-name"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="merchant-segment">Segment · optional</Label>
+              <Input
+                id="merchant-segment"
+                value={segment}
+                onChange={(e) => setSegment(e.target.value)}
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={submitting || !name}>
+              {submitting ? "Creating…" : "+ Create merchant"}
+            </Button>
+            {submitError && <ErrorText>{submitError}</ErrorText>}
+            {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
+          </form>
+        </Card>
 
-      <div className="mt-8">
-        <h2 className="font-medium text-sm text-slate-900 mb-3">All merchants</h2>
-        {loading && <LoadingRow>Loading merchants…</LoadingRow>}
-        {error && <ErrorText>{error}</ErrorText>}
-        {!loading && !error && merchants.length === 0 && (
-          <EmptyState>No merchants yet.</EmptyState>
-        )}
-        {!loading && merchants.length > 0 && (
-          <Card>
-            <ul className="divide-y divide-slate-100">
-              {merchants.map((m) => (
-                <li key={m.id} className="px-4 py-3.5 flex justify-between items-center text-sm">
-                  <span className="text-slate-900 font-medium">
-                    {m.name}
-                    {m.segment ? (
-                      <span className="text-slate-400 font-normal"> · {m.segment}</span>
-                    ) : null}
-                  </span>
-                  <span className="text-slate-400 text-xs font-mono">{m.id}</span>
-                </li>
+        <div className="min-w-0">
+          <div className="flex items-end justify-between mb-4">
+            <Telemetry slashes>Registry</Telemetry>
+            {!loading && (
+              <span className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-slate-500 tabular-nums">
+                <span className="text-slate-900">{merchants.length}</span> registered
+              </span>
+            )}
+          </div>
+          {loading && (
+            <Card className="p-5">
+              <LoadingRow>Loading merchants</LoadingRow>
+            </Card>
+          )}
+          {error && <ErrorText>{error}</ErrorText>}
+          {!loading && !error && merchants.length === 0 && (
+            <EmptyState>No merchants yet.</EmptyState>
+          )}
+          {!loading && merchants.length > 0 && (
+            <div className="grid sm:grid-cols-2 gap-4">
+              {merchants.map((m, i) => (
+                <Card key={m.id} className="p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="chamfer-sm shrink-0 w-10 h-10 flex items-center justify-center border border-sky-200 bg-sky-50 font-[family-name:var(--font-display)] text-sm font-bold text-[var(--accent)]">
+                      {m.name.slice(0, 2).toUpperCase()}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-slate-900 font-medium truncate">{m.name}</span>
+                        <span className="font-mono text-[10px] text-slate-300 tabular-nums">
+                          {String(i + 1).padStart(2, "0")}
+                        </span>
+                      </div>
+                      <div className="mt-1 flex items-center gap-2">
+                        {m.segment ? (
+                          <Badge variant="decision">{m.segment}</Badge>
+                        ) : (
+                          <span className="telemetry text-slate-300">No segment</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-dashed border-slate-200 flex items-center justify-between gap-3 font-mono text-[10.5px] text-slate-400">
+                    <span className="truncate" title={m.id}>
+                      ID {m.id}
+                    </span>
+                    <span className="shrink-0">
+                      {new Date(m.created_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                </Card>
               ))}
-            </ul>
-          </Card>
-        )}
+            </div>
+          )}
+        </div>
       </div>
     </main>
   );

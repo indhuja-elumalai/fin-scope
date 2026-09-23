@@ -1,77 +1,387 @@
 @import "tailwindcss";
 
-/* Design tokens for the FIN-SCOPE frontend.
+/* Design tokens for the FIN-SCOPE frontend -- "machine console" theme.
  *
- * This commits to a single, deliberately-designed light theme rather than
- * the previous prefers-color-scheme auto-switch. That switch flipped
- * --background/--foreground for dark mode, but every page's actual UI
- * (nav links, borders, cards, inputs) used hardcoded Tailwind neutral-*
- * utility classes that never read those variables -- so a user in OS dark
- * mode got a dark page background with those same hardcoded near-black
- * grays for text and borders, which is the navbar "hover text nearly
- * invisible" bug and would have affected every other page too. Properly
- * supporting both themes would mean dark-mode-aware variants for every
- * component; committing to one polished, fully-contrast-checked theme is
- * the smaller, more reliable change for an internal control-plane tool
- * that does not need to match the OS theme.
+ * FIN-SCOPE is a control plane: an operator watching a bounded, auditable
+ * machine decide and act. The UI leans into that -- a dark instrument
+ * panel, gridded backdrop, bracketed HUD panels, monospaced telemetry
+ * labels and a single electric-cyan signal color -- rather than a generic
+ * light SaaS dashboard.
+ *
+ * Still a single, deliberately-designed theme (not an OS-driven auto
+ * switch): every page uses Tailwind palette utilities (slate-*, emerald-*,
+ * ...) directly, so the palette itself is re-pointed below. The light-first
+ * scale is inverted -- slate-50 is now the deepest panel tint and slate-900
+ * the brightest text -- and each hue's pale 50/100/200 steps become dark
+ * translucent tints while its 600-900 steps become bright readable text.
+ * Existing `bg-emerald-50 text-emerald-700 border-emerald-200` combinations
+ * therefore resolve to a correct dark-console equivalent without every page
+ * having to be rewritten, and new code keeps using the same vocabulary.
  */
 :root {
-  --background: #f8fafc; /* slate-50 */
-  --surface: #ffffff;
-  --foreground: #0f172a; /* slate-900 */
-  --border-subtle: #e2e8f0; /* slate-200 */
-  --accent: #2563eb; /* blue-600 */
-  --accent-strong: #1d4ed8; /* blue-700 */
+  color-scheme: dark;
+
+  --background: #05080c;
+  --surface: #0a1017;
+  --surface-raised: #0e1620;
+  --foreground: #e6edf5;
+  --border-subtle: #1b2733;
+  --border-strong: #2a3a4b;
+  --muted: #7c8fa3;
+
+  --accent: #2de2ff; /* signal cyan */
+  --accent-strong: #00b8d9;
+  --accent-glow: rgb(45 226 255 / 0.35);
+  --accent-ai: #a78bfa; /* the one AI step in the loop */
+  --warn: #ffb020;
+  --danger: #ff4d5e;
+  --ok: #2ee59d;
+
+  --grid-line: rgb(45 226 255 / 0.045);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-accent: var(--accent);
+  --color-accent-ai: var(--accent-ai);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-chakra), var(--font-geist-sans), sans-serif;
+}
+
+@theme {
+  /* Neutral scale, inverted for the dark console. */
+  --color-white: #0a1017;
+  --color-slate-50: #0c131b;
+  --color-slate-100: #121c26;
+  --color-slate-200: #1b2733;
+  --color-slate-300: #2a3a4b;
+  --color-slate-400: #647991;
+  --color-slate-500: #8195aa;
+  --color-slate-600: #9fb0c2;
+  --color-slate-700: #bccad8;
+  --color-slate-800: #d6dfe9;
+  --color-slate-900: #eef3f8;
+  --color-slate-950: #ffffff;
+
+  /* Hue scales: 50-300 become dark tints of the hue, 400/500 stay the
+   * signal color, 600-900 become bright text tints. */
+  --color-emerald-50: rgb(46 229 157 / 0.08);
+  --color-emerald-100: rgb(46 229 157 / 0.14);
+  --color-emerald-200: rgb(46 229 157 / 0.3);
+  --color-emerald-300: rgb(46 229 157 / 0.5);
+  --color-emerald-400: #2ee59d;
+  --color-emerald-500: #2ee59d;
+  --color-emerald-600: #4ff0b0;
+  --color-emerald-700: #6ef5c1;
+  --color-emerald-800: #9af9d6;
+  --color-emerald-900: #c8fde9;
+
+  --color-red-50: rgb(255 77 94 / 0.09);
+  --color-red-100: rgb(255 77 94 / 0.15);
+  --color-red-200: rgb(255 77 94 / 0.32);
+  --color-red-300: rgb(255 77 94 / 0.5);
+  --color-red-400: #ff4d5e;
+  --color-red-500: #ff4d5e;
+  --color-red-600: #ff6b79;
+  --color-red-700: #ff8a95;
+  --color-red-800: #ffb0b8;
+  --color-red-900: #ffd6da;
+
+  --color-amber-50: rgb(255 176 32 / 0.08);
+  --color-amber-100: rgb(255 176 32 / 0.14);
+  --color-amber-200: rgb(255 176 32 / 0.3);
+  --color-amber-300: rgb(255 176 32 / 0.5);
+  --color-amber-400: #ffb020;
+  --color-amber-500: #ffb020;
+  --color-amber-600: #ffc04d;
+  --color-amber-700: #ffcb6b;
+  --color-amber-800: #ffd88f;
+  --color-amber-900: #ffebc4;
+
+  --color-orange-50: rgb(255 122 48 / 0.08);
+  --color-orange-100: rgb(255 122 48 / 0.14);
+  --color-orange-200: rgb(255 122 48 / 0.32);
+  --color-orange-300: rgb(255 122 48 / 0.55);
+  --color-orange-400: #ff7a30;
+  --color-orange-500: #ff7a30;
+  --color-orange-600: #ff9354;
+  --color-orange-700: #ffa770;
+  --color-orange-800: #ffc39c;
+  --color-orange-900: #ffe0cc;
+
+  --color-indigo-50: rgb(167 139 250 / 0.08);
+  --color-indigo-100: rgb(167 139 250 / 0.14);
+  --color-indigo-200: rgb(167 139 250 / 0.3);
+  --color-indigo-300: rgb(167 139 250 / 0.55);
+  --color-indigo-400: #a78bfa;
+  --color-indigo-500: #a78bfa;
+  --color-indigo-600: #b9a3fb;
+  --color-indigo-700: #c7b6fc;
+  --color-indigo-800: #dad0fd;
+  --color-indigo-900: #ece7fe;
+
+  --color-purple-50: rgb(217 110 255 / 0.08);
+  --color-purple-100: rgb(217 110 255 / 0.14);
+  --color-purple-200: rgb(217 110 255 / 0.3);
+  --color-purple-300: rgb(217 110 255 / 0.5);
+  --color-purple-400: #d96eff;
+  --color-purple-500: #d96eff;
+  --color-purple-600: #e28fff;
+  --color-purple-700: #e9a8ff;
+  --color-purple-800: #f1c9ff;
+  --color-purple-900: #f9e6ff;
+
+  --color-fuchsia-50: rgb(255 92 205 / 0.08);
+  --color-fuchsia-100: rgb(255 92 205 / 0.14);
+  --color-fuchsia-200: rgb(255 92 205 / 0.3);
+  --color-fuchsia-300: rgb(255 92 205 / 0.5);
+  --color-fuchsia-400: #ff5ccd;
+  --color-fuchsia-500: #ff5ccd;
+  --color-fuchsia-600: #ff7fd8;
+  --color-fuchsia-700: #ff9ce1;
+  --color-fuchsia-800: #ffc2ed;
+  --color-fuchsia-900: #ffe3f6;
+
+  --color-sky-50: rgb(45 226 255 / 0.07);
+  --color-sky-100: rgb(45 226 255 / 0.13);
+  --color-sky-200: rgb(45 226 255 / 0.3);
+  --color-sky-300: rgb(45 226 255 / 0.5);
+  --color-sky-400: #2de2ff;
+  --color-sky-500: #2de2ff;
+  --color-sky-600: #5ae9ff;
+  --color-sky-700: #80eeff;
+  --color-sky-800: #aef5ff;
+  --color-sky-900: #d6faff;
+
+  --color-teal-50: rgb(20 240 200 / 0.08);
+  --color-teal-100: rgb(20 240 200 / 0.14);
+  --color-teal-200: rgb(20 240 200 / 0.3);
+  --color-teal-300: rgb(20 240 200 / 0.5);
+  --color-teal-400: #14f0c8;
+  --color-teal-500: #14f0c8;
+  --color-teal-600: #45f4d4;
+  --color-teal-700: #72f7df;
+  --color-teal-800: #a6fbeb;
+  --color-teal-900: #d3fdf5;
+
+  /* "blue" was the old link/accent color -- it now resolves to signal cyan. */
+  --color-blue-50: rgb(45 226 255 / 0.07);
+  --color-blue-100: rgb(45 226 255 / 0.15);
+  --color-blue-200: rgb(45 226 255 / 0.3);
+  --color-blue-300: rgb(45 226 255 / 0.5);
+  --color-blue-400: #2de2ff;
+  --color-blue-500: #2de2ff;
+  --color-blue-600: #2de2ff;
+  --color-blue-700: #6ceaff;
+  --color-blue-800: #a3f3ff;
+  --color-blue-900: #d6faff;
+}
+
+html {
+  background: var(--background);
 }
 
 body {
-  background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  /* Financial figures line up better with tabular (fixed-width) numerals. */
+  font-feature-settings: "tnum" 1, "cv11" 1;
+  background-color: var(--background);
+  /* Blueprint grid + a cold glow from the top -- the "instrument panel". */
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgb(45 226 255 / 0.1), transparent 70%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+  background-attachment: fixed;
 }
 
-/* A visible, consistent focus ring on every interactive element -- the
- * default browser outline is suppressed by some of the border/rounded
- * utility combinations below, so it is replaced rather than removed. */
+/* Faint CRT scanlines over the whole viewport. Purely decorative and
+ * pointer-transparent; disabled for users who prefer reduced motion/noise. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 0.018) 0,
+    rgb(255 255 255 / 0.018) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* A visible, consistent focus ring on every interactive element. */
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 1px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+  box-shadow: 0 0 0 4px rgb(45 226 255 / 0.15);
 }
 
 ::selection {
-  background: #bfdbfe; /* blue-200 */
+  background: rgb(45 226 255 / 0.3);
+  color: #fff;
 }
 
-/* Financial figures line up better with tabular (fixed-width) numerals --
- * applied globally rather than repeating font-feature-settings per
- * element; Tailwind's `tabular-nums` utility already used throughout the
- * app becomes a no-op reinforcement rather than the only source of this. */
-body {
-  font-feature-settings: "tnum" 1, "cv11" 1;
+/* Native <option> lists ignore most styling; give them the panel color. */
+option {
+  background: var(--surface);
+  color: var(--foreground);
 }
 
-/* Slim, low-contrast scrollbar for horizontally-scrolling strips (the
- * workflow stepper on narrow viewports) -- restrained, not decorative. */
-.scrollbar-thin {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-subtle) transparent;
+/* --- HUD primitives ------------------------------------------------- */
+
+/* Panel with bracketed corners. The brackets are two pseudo-elements, so
+ * any child layout is untouched. */
+.hud-panel {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 0.025), transparent 40%),
+    rgb(10 16 23 / 0.9);
+  border: 1px solid var(--border-subtle);
 }
-.scrollbar-thin::-webkit-scrollbar {
-  height: 6px;
+.hud-panel::before,
+.hud-panel::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+  border-color: var(--accent);
+  opacity: 0.7;
+  transition: opacity 0.2s, width 0.2s, height 0.2s;
 }
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: var(--border-subtle);
+.hud-panel::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+.hud-panel::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1px solid;
+  border-right: 1px solid;
+}
+.hud-panel:hover::before,
+.hud-panel:hover::after {
+  opacity: 1;
+  width: 16px;
+  height: 16px;
+}
+
+/* Chamfered (cut-corner) shape for buttons and tags -- the single most
+ * "machined" silhouette in the system. */
+.chamfer {
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.chamfer-sm {
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+}
+
+/* Telemetry label: the mono uppercase micro-type used for every eyebrow,
+ * column header and field label. */
+.telemetry {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.text-glow {
+  text-shadow: 0 0 18px var(--accent-glow);
+}
+
+/* Status LED. Color comes from `color` (currentColor) so a text-* utility
+ * drives it. */
+.led {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
+  background: currentColor;
+  box-shadow: 0 0 0 2px rgb(0 0 0 / 0.4), 0 0 10px currentColor;
+}
+.led-pulse {
+  animation: led-pulse 1.8s ease-in-out infinite;
+}
+@keyframes led-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.cursor-blink::after {
+  content: "_";
+  margin-left: 2px;
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* Slow radar sweep on the command-center status dial. */
+.sweep {
+  transform-origin: 50% 50%;
+  animation: sweep 6s linear infinite;
+}
+@keyframes sweep {
+  to { transform: rotate(360deg); }
+}
+
+/* Data moving along a pipeline connector. */
+.flow-line {
+  background-image: linear-gradient(180deg, transparent 0%, var(--accent) 50%, transparent 100%);
+  background-size: 100% 200%;
+  animation: flow 2.4s linear infinite;
+}
+@keyframes flow {
+  from { background-position: 0 -100%; }
+  to { background-position: 0 100%; }
+}
+
+.boot-in {
+  animation: boot-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+@keyframes boot-in {
+  from { opacity: 0; transform: translateY(6px); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .led-pulse,
+  .cursor-blink::after,
+  .sweep,
+  .flow-line,
+  .boot-in {
+    animation: none;
+  }
+  body::after {
+    display: none;
+  }
+}
+
+/* Slim, low-contrast scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar,
+::-webkit-scrollbar {
+  height: 6px;
+  width: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb,
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 0;
 }
