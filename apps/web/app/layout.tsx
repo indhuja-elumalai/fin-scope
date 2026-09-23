@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Chakra_Petch, Geist, Geist_Mono } from "next/font/google";
 
 import { Nav } from "@/components/nav";
+import { StatusBar } from "@/components/status-bar";
 
 import "./globals.css";
 
@@ -15,6 +16,14 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Squared, engineered display face for headings and big numerals -- the
+// "machined" counterpart to Geist's neutral body text.
+const display = Chakra_Petch({
+  variable: "--font-chakra",
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+});
+
 export const metadata: Metadata = {
   title: "FIN-SCOPE",
   description: "Financial Intelligence, Simulation & Controlled Decision Engine",
@@ -24,11 +33,12 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${display.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
         <Nav />
-        {children}
+        <div className="flex-1">{children}</div>
+        <StatusBar />
       </body>
     </html>
   );
