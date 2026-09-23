@@ -1159,10 +1159,10 @@ export default function InvestigationDetailPage() {
     : [];
 
   return (
-    <main className="max-w-4xl mx-auto px-6 py-10">
+    <main className="max-w-5xl mx-auto px-4 sm:px-6 py-10">
       <Link
         href="/investigations"
-        className="text-sm text-slate-500 hover:text-slate-900 transition-colors"
+        className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-slate-500 hover:text-[var(--accent)] transition-colors"
       >
         ← All investigations
       </Link>
@@ -1173,9 +1173,13 @@ export default function InvestigationDetailPage() {
       {investigation && (
         <div className="mt-4 space-y-6">
           <PageHeader
-            eyebrow="Investigation"
+            eyebrow={`SYS://fin-scope/investigations/${investigation.id.slice(0, 8)}`}
             title={
-              <span className="flex items-center gap-2">
+              <span
+                className={`flex items-center gap-3 flex-wrap ${
+                  investigation.incident_detected ? "text-red-500 [text-shadow:0_0_24px_rgb(255_77_94/0.4)]" : ""
+                }`}
+              >
                 {investigation.incident_detected ? "Incident detected" : "No incident"}
                 <Badge variant="fact">FACT</Badge>
               </span>
@@ -1184,7 +1188,7 @@ export default function InvestigationDetailPage() {
             <span className="text-xs text-slate-400 font-mono">{investigation.id}</span>
           </PageHeader>
 
-          <Card className="p-3 overflow-x-auto scrollbar-thin">
+          <Card className="p-4 overflow-x-auto scrollbar-thin">
             <WorkflowStepper stages={workflowStages} />
           </Card>
 
@@ -1192,20 +1196,20 @@ export default function InvestigationDetailPage() {
           <Card>
             <dl className="divide-y divide-slate-100">
               <div className="px-4 py-3 flex justify-between gap-4 text-sm">
-                <dt className="text-slate-500">Merchant</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Merchant</dt>
                 <dd className="text-right break-all font-mono text-xs text-slate-700 pt-0.5">
                   {investigation.merchant_id}
                 </dd>
               </div>
               <div className="px-4 py-3 flex justify-between gap-4 text-sm">
-                <dt className="text-slate-500">Window</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Window</dt>
                 <dd className="text-right text-slate-900">
                   {new Date(investigation.window_start).toLocaleString()} –{" "}
                   {new Date(investigation.window_end).toLocaleString()}
                 </dd>
               </div>
               <div className="px-4 py-3 flex justify-between gap-4 text-sm">
-                <dt className="text-slate-500">Evidence event count</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Evidence event count</dt>
                 <dd className="text-right text-slate-900 font-medium">
                   {investigation.evidence_event_count}
                 </dd>
@@ -1490,7 +1494,7 @@ function ReasoningResult({ reasoning }: { reasoning: Reasoning }) {
 
 function HypothesisCard({ hypothesis }: { hypothesis: Hypothesis }) {
   return (
-    <li className="border border-slate-200 border-l-2 border-l-indigo-300 rounded-lg p-3.5 bg-slate-50/50">
+    <li className="border border-slate-200 border-l-2 border-l-indigo-400 p-3.5 bg-indigo-50">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-baseline gap-2">
           <span className="text-xs font-semibold text-slate-400 tabular-nums">
@@ -1614,13 +1618,13 @@ function SimulationSection({
 
       {comparableScenarios.length > 1 && (
         <div className="mt-5 pt-4 border-t border-slate-100">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+          <p className="telemetry text-slate-400 mb-2">
             Scenario comparison — latest completed run per scenario
           </p>
           <div className="overflow-x-auto -mx-1">
             <table className="w-full text-sm min-w-[440px]">
               <thead>
-                <tr className="text-left text-xs text-slate-400">
+                <tr className="text-left telemetry text-slate-400">
                   <th className="font-medium pb-1.5 px-1">Scenario</th>
                   <th className="font-medium pb-1.5 px-1 text-right">Failed Δ</th>
                   <th className="font-medium pb-1.5 px-1 text-right">Recovery</th>
@@ -1671,7 +1675,7 @@ function SimulationSection({
 
       {history.length > 0 && (
         <div className="mt-5 pt-4 border-t border-slate-100">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+          <p className="telemetry text-slate-400 mb-2">
             Simulation history
           </p>
           <ul className="divide-y divide-slate-100">
@@ -1781,23 +1785,23 @@ function SimulationScopeCard({
   scope: SimulationScopeSnapshot;
 }) {
   return (
-    <div className="border border-slate-200 rounded-lg p-3">
+    <div className="border border-slate-200 p-3 bg-slate-50">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-medium text-slate-500">{label}</span>
         <Badge variant={tone}>{tone === "fact" ? "FACT" : "PROJECTED"}</Badge>
       </div>
       <dl className="space-y-1 text-sm">
         <div className="flex justify-between">
-          <dt className="text-slate-500">Failed</dt>
+          <dt className="telemetry text-slate-400 pt-0.5">Failed</dt>
           <dd className="text-slate-900 font-medium tabular-nums">{scope.failed_event_count}</dd>
         </div>
         <div className="flex justify-between">
-          <dt className="text-slate-500">Succeeded</dt>
+          <dt className="telemetry text-slate-400 pt-0.5">Succeeded</dt>
           <dd className="text-slate-900 font-medium tabular-nums">{scope.success_event_count}</dd>
         </div>
         {scope.exposure_by_currency.map((item) => (
           <div key={item.currency} className="flex justify-between">
-            <dt className="text-slate-500">Exposure ({item.currency})</dt>
+            <dt className="telemetry text-slate-400 pt-0.5">Exposure ({item.currency})</dt>
             <dd className="text-slate-900 font-medium tabular-nums">{item.amount}</dd>
           </div>
         ))}
@@ -1868,7 +1872,7 @@ function DecisionSection({
 
       {history.length > 0 && (
         <div className="mt-5 pt-4 border-t border-slate-100">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+          <p className="telemetry text-slate-400 mb-2">
             Decision history
           </p>
           <ul className="divide-y divide-slate-100">
@@ -1910,13 +1914,13 @@ function DecisionResult({ decision }: { decision: Decision }) {
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+        <p className="telemetry text-slate-400 mb-2">
           Candidates compared
         </p>
         <div className="overflow-x-auto -mx-1">
           <table className="w-full text-sm min-w-[440px]">
             <thead>
-              <tr className="text-left text-xs text-slate-400">
+              <tr className="text-left telemetry text-slate-400">
                 <th className="font-medium pb-1.5 px-1">Scenario</th>
                 <th className="font-medium pb-1.5 px-1 text-right">Failed Δ</th>
                 <th className="font-medium pb-1.5 px-1 text-right">Recovery</th>
@@ -1962,8 +1966,8 @@ function DecisionResult({ decision }: { decision: Decision }) {
       </div>
 
       <div className="grid sm:grid-cols-2 gap-3">
-        <div className="border border-slate-200 border-l-2 border-l-sky-400 rounded-lg p-3">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1.5">
+        <div className="border border-slate-200 border-l-2 border-l-sky-400 p-3 bg-slate-50">
+          <p className="telemetry text-slate-400 mb-1.5">
             Recommendation
           </p>
           <div className="flex items-center gap-1.5 flex-wrap">
@@ -1979,7 +1983,7 @@ function DecisionResult({ decision }: { decision: Decision }) {
         </div>
 
         <div
-          className={`border border-slate-200 rounded-lg p-3 border-l-2 ${
+          className={`border border-slate-200 p-3 bg-slate-50 border-l-2 ${
             !policyCopy
               ? "border-l-slate-200"
               : policyCopy.variant === "allowed"
@@ -1989,7 +1993,7 @@ function DecisionResult({ decision }: { decision: Decision }) {
                   : "border-l-red-400"
           }`}
         >
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-1.5">
+          <p className="telemetry text-slate-400 mb-1.5">
             Authorization
           </p>
           {policyCopy ? (
@@ -2135,7 +2139,7 @@ function SandboxActionSection({
 
       {history.length > 0 && (
         <div className="mt-5 pt-4 border-t border-slate-100">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+          <p className="telemetry text-slate-400 mb-2">
             Sandbox action history
           </p>
           {!actionsLoaded && <LoadingRow>Loading sandbox action history…</LoadingRow>}
@@ -2188,7 +2192,7 @@ function ActionResult({ action }: { action: Action }) {
       </div>
 
       {result && (
-        <div className="border border-slate-200 border-l-2 border-l-teal-400 rounded-lg p-3 space-y-2">
+        <div className="border border-slate-200 border-l-2 border-l-teal-400 p-3 bg-slate-50 space-y-2">
           <div className="flex justify-between gap-4 text-sm">
             <span className="text-slate-500">Targeted events</span>
             <span className="text-slate-900 font-medium tabular-nums">
@@ -2306,7 +2310,7 @@ function OutcomeVerificationSection({
 
       {history.length > 0 && (
         <div className="mt-5 pt-4 border-t border-slate-100">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+          <p className="telemetry text-slate-400 mb-2">
             Verification history
           </p>
           {!verificationsLoaded && <LoadingRow>Loading verification history…</LoadingRow>}
@@ -2358,7 +2362,7 @@ function VerificationResult({ verification }: { verification: Verification }) {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="border border-purple-200 rounded-lg p-3 space-y-2">
+        <div className="border border-purple-200 p-3 bg-slate-50 space-y-2">
           <div className="flex items-center gap-1.5">
             <Badge variant="projected">PROJECTED</Badge>
             <span className="text-xs font-medium text-slate-500">Expected</span>
@@ -2366,31 +2370,31 @@ function VerificationResult({ verification }: { verification: Verification }) {
           {expected.available ? (
             <dl className="space-y-1.5 text-sm">
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Eligible events</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Eligible events</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {expected.eligible_event_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Projected success</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Projected success</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {expected.projected_success_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Projected failure</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Projected failure</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {expected.projected_failure_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Estimated recovery</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Estimated recovery</dt>
                 <dd className="text-slate-900 tabular-nums text-right">
                   {formatCurrencyAmounts(expected.estimated_recovery_by_currency)}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Projected exposure</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Projected exposure</dt>
                 <dd className="text-slate-900 tabular-nums text-right">
                   {formatCurrencyAmounts(expected.projected_exposure_by_currency)}
                 </dd>
@@ -2401,7 +2405,7 @@ function VerificationResult({ verification }: { verification: Verification }) {
           )}
         </div>
 
-        <div className="border border-teal-200 rounded-lg p-3 space-y-2">
+        <div className="border border-teal-200 p-3 bg-slate-50 space-y-2">
           <div className="flex items-center gap-1.5">
             <Badge variant="sandbox">SANDBOX</Badge>
             <span className="text-xs font-medium text-slate-500">Observed</span>
@@ -2409,19 +2413,19 @@ function VerificationResult({ verification }: { verification: Verification }) {
           {observed.available ? (
             <dl className="space-y-1.5 text-sm">
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Observed success</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Observed success</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {observed.observed_success_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Observed failure</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Observed failure</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {observed.observed_failure_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Observed recovery</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Observed recovery</dt>
                 <dd className="text-slate-900 tabular-nums text-right">
                   {formatCurrencyAmounts(observed.observed_recovery_by_currency)}
                 </dd>
@@ -2434,8 +2438,8 @@ function VerificationResult({ verification }: { verification: Verification }) {
       </div>
 
       {dimensions && (
-        <div className="border border-slate-200 rounded-lg p-3 space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        <div className="border border-slate-200 p-3 bg-slate-50 space-y-2">
+          <p className="telemetry text-slate-400">
             Dimension comparison
           </p>
           <div className="flex justify-between gap-4 text-sm">
@@ -2611,7 +2615,7 @@ function RazorpayActionSection({
 
       {history.length > 0 && (
         <div className="mt-5 pt-4 border-t border-slate-100">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+          <p className="telemetry text-slate-400 mb-2">
             Razorpay TEST action history
           </p>
           {!razorpayActionsLoaded && <LoadingRow>Loading Razorpay TEST action history…</LoadingRow>}
@@ -2662,7 +2666,7 @@ function RazorpayActionResult({ action }: { action: RazorpayAction }) {
         <Badge variant={statusCopy.variant}>{statusCopy.label}</Badge>
       </div>
 
-      <div className="border border-slate-200 border-l-2 border-l-orange-400 rounded-lg p-3 space-y-2">
+      <div className="border border-slate-200 border-l-2 border-l-orange-400 p-3 bg-slate-50 space-y-2">
         <div className="flex justify-between gap-4 text-sm">
           <span className="text-slate-500">Razorpay order ID</span>
           <span className="text-slate-900 font-mono text-xs text-right break-all">
@@ -2778,7 +2782,7 @@ function RazorpayVerificationSection({
 
       {history.length > 0 && (
         <div className="mt-5 pt-4 border-t border-slate-100">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
+          <p className="telemetry text-slate-400 mb-2">
             Verification history
           </p>
           {!verificationsLoaded && <LoadingRow>Loading verification history…</LoadingRow>}
@@ -2830,7 +2834,7 @@ function RazorpayVerificationResult({ verification }: { verification: RazorpayVe
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="border border-purple-200 rounded-lg p-3 space-y-2">
+        <div className="border border-purple-200 p-3 bg-slate-50 space-y-2">
           <div className="flex items-center gap-1.5">
             <Badge variant="projected">PROJECTED</Badge>
             <span className="text-xs font-medium text-slate-500">Expected</span>
@@ -2838,31 +2842,31 @@ function RazorpayVerificationResult({ verification }: { verification: RazorpayVe
           {expected.available ? (
             <dl className="space-y-1.5 text-sm">
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Eligible events</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Eligible events</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {expected.eligible_event_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Projected success</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Projected success</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {expected.projected_success_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Projected failure</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Projected failure</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {expected.projected_failure_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Estimated recovery</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Estimated recovery</dt>
                 <dd className="text-slate-900 tabular-nums text-right">
                   {formatCurrencyAmounts(expected.estimated_recovery_by_currency)}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Projected exposure</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Projected exposure</dt>
                 <dd className="text-slate-900 tabular-nums text-right">
                   {formatCurrencyAmounts(expected.projected_exposure_by_currency)}
                 </dd>
@@ -2873,7 +2877,7 @@ function RazorpayVerificationResult({ verification }: { verification: RazorpayVe
           )}
         </div>
 
-        <div className="border border-orange-200 rounded-lg p-3 space-y-2">
+        <div className="border border-orange-200 p-3 bg-slate-50 space-y-2">
           <div className="flex items-center gap-1.5">
             <Badge variant="razorpay">RAZORPAY TEST</Badge>
             <span className="text-xs font-medium text-slate-500">Observed (real webhook)</span>
@@ -2881,25 +2885,25 @@ function RazorpayVerificationResult({ verification }: { verification: RazorpayVe
           {observed.available ? (
             <dl className="space-y-1.5 text-sm">
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Observed success</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Observed success</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {observed.observed_success_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Observed failure</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Observed failure</dt>
                 <dd className="text-slate-900 font-medium tabular-nums">
                   {observed.observed_failure_count ?? "—"}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Observed recovery</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Observed recovery</dt>
                 <dd className="text-slate-900 tabular-nums text-right">
                   {formatCurrencyAmounts(observed.observed_recovery_by_currency)}
                 </dd>
               </div>
               <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Observation source</dt>
+                <dt className="telemetry text-slate-400 pt-0.5">Observation source</dt>
                 <dd className="text-slate-900 text-xs text-right">
                   {observed.observation_event_type} ({observed.observation_source})
                 </dd>
@@ -2912,8 +2916,8 @@ function RazorpayVerificationResult({ verification }: { verification: RazorpayVe
       </div>
 
       {dimensions && (
-        <div className="border border-slate-200 rounded-lg p-3 space-y-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        <div className="border border-slate-200 p-3 bg-slate-50 space-y-2">
+          <p className="telemetry text-slate-400">
             Dimension comparison
           </p>
           <div className="flex justify-between gap-4 text-sm">

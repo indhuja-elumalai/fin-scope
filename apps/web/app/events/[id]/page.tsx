@@ -4,7 +4,14 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { Card, ErrorText, KeyValueRow, LoadingRow } from "@/components/ui";
+import {
+  Card,
+  ErrorText,
+  KeyValueRow,
+  LoadingRow,
+  PageHeader,
+  SectionHeading,
+} from "@/components/ui";
 
 type FinancialEvent = {
   id: string;
@@ -70,17 +77,33 @@ export default function EventDetailPage() {
     : null;
 
   return (
-    <main className="max-w-2xl mx-auto px-6 py-10">
-      <Link href="/events" className="text-sm text-slate-500 hover:text-slate-900 transition-colors">
+    <main className="max-w-4xl mx-auto px-4 sm:px-6 py-10">
+      <Link
+        href="/events"
+        className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-slate-500 hover:text-[var(--accent)] transition-colors"
+      >
         ← All events
       </Link>
-      <h1 className="text-xl font-semibold text-slate-900 mt-3">Event detail</h1>
 
-      {loading && <div className="mt-4"><LoadingRow>Loading event…</LoadingRow></div>}
-      {error && <div className="mt-4"><ErrorText>{error}</ErrorText></div>}
+      <div className="mt-4">
+        <PageHeader
+          eyebrow="SYS://fin-scope/events/detail"
+          title={event ? event.event_type : "Event detail"}
+        >
+          {event && (
+            <span className="font-mono text-[11px] text-slate-400">{event.id}</span>
+          )}
+        </PageHeader>
+      </div>
+
+      {loading && <div className="mt-6"><LoadingRow>Loading event</LoadingRow></div>}
+      {error && <div className="mt-6"><ErrorText>{error}</ErrorText></div>}
       {event && fields && (
-        <div className="mt-6 space-y-6">
+        <div className="mt-8 grid md:grid-cols-2 gap-6 items-start">
           <Card>
+            <div className="px-4 pt-4">
+              <SectionHeading eyebrow="Record" title="Fields" />
+            </div>
             <dl className="divide-y divide-slate-100">
               {Object.entries(fields).map(([label, value]) => (
                 <KeyValueRow key={label} label={label} value={value} />
@@ -88,10 +111,8 @@ export default function EventDetailPage() {
             </dl>
           </Card>
           <Card className="p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400 mb-2">
-              Payload
-            </p>
-            <pre className="bg-slate-50 border border-slate-100 rounded-lg p-3 text-xs overflow-x-auto text-slate-700">
+            <SectionHeading eyebrow="Raw" title="Payload" />
+            <pre className="mt-3 bg-[#070c12] border border-slate-200 p-4 font-mono text-xs leading-relaxed overflow-x-auto text-emerald-700">
               {JSON.stringify(event.payload, null, 2)}
             </pre>
           </Card>
