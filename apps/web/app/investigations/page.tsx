@@ -13,6 +13,7 @@ import {
   Label,
   LoadingRow,
   PageHeader,
+  SectionHeading,
   Select,
   SuccessText,
 } from "@/components/ui";
@@ -106,6 +107,8 @@ export default function InvestigationsPage() {
     };
   }, [filterMerchant, refreshIndex]);
 
+  const merchantNames = new Map(merchants.map((m) => [m.id, m.name]));
+
   function handleFilterMerchantChange(value: string) {
     setLoading(true);
     setFilterMerchant(value);
@@ -146,20 +149,22 @@ export default function InvestigationsPage() {
     }
   }
 
+  const incidentCount = investigations.filter((inv) => inv.incident_detected).length;
+
   return (
-    <main className="max-w-4xl mx-auto px-6 py-10">
+    <main className="max-w-6xl mx-auto px-4 sm:px-6 py-10">
       <PageHeader
-        eyebrow="Workflow"
+        eyebrow="SYS://fin-scope/investigations"
         title="Incident investigations"
         description="Run a deterministic FIND → dominant-signal → impact analysis over a merchant's recent financial events, then reason about plausible, evidence-grounded explanations."
       />
 
-      <Card className="mt-8 p-5">
-        <form onSubmit={handleTrigger} className="space-y-4">
-          <h2 className="font-medium text-sm text-slate-900">Run investigation</h2>
-          <div className="grid sm:grid-cols-2 gap-4">
+      <div className="grid lg:grid-cols-[340px_1fr] gap-6 mt-8 items-start">
+        <Card className="p-5 lg:sticky lg:top-20">
+          <form onSubmit={handleTrigger} className="space-y-5">
+            <SectionHeading eyebrow="Operator input" title="Launch run" />
             <div>
-              <Label htmlFor="investigation-merchant">Merchant</Label>
+              <Label htmlFor="investigation-merchant">Target merchant</Label>
               <Select
                 id="investigation-merchant"
                 required
@@ -184,7 +189,7 @@ export default function InvestigationsPage() {
               )}
             </div>
             <div>
-              <Label htmlFor="investigation-as-of">As of (optional, defaults to now)</Label>
+              <Label htmlFor="investigation-as-of">As of · optional, defaults to now</Label>
               <Input
                 id="investigation-as-of"
                 type="datetime-local"
@@ -192,87 +197,126 @@ export default function InvestigationsPage() {
                 onChange={(e) => setTriggerAsOf(e.target.value)}
               />
             </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <Button type="submit" disabled={submitting || !triggerMerchant}>
-              {submitting ? "Investigating…" : "Run investigation"}
+            <Button type="submit" className="w-full" disabled={submitting || !triggerMerchant}>
+              {submitting ? "Investigating…" : "▶ Run investigation"}
             </Button>
-          </div>
-          {submitError && <ErrorText>{submitError}</ErrorText>}
-          {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
-        </form>
-      </Card>
+            {submitError && <ErrorText>{submitError}</ErrorText>}
+            {submitSuccess && <SuccessText>{submitSuccess}</SuccessText>}
+            <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-slate-400 leading-relaxed pt-3 border-t border-dashed border-slate-200">
+              Deterministic FIND · no AI call · no side effects
+            </p>
+          </form>
+        </Card>
 
-      <div className="mt-8">
-        <div className="flex gap-4 items-end justify-between mb-3 flex-wrap">
-          <div>
-            <Label htmlFor="filter-merchant">Filter by merchant</Label>
-            <Select
-              id="filter-merchant"
-              value={filterMerchant}
-              onChange={(e) => handleFilterMerchantChange(e.target.value)}
-              className="min-w-[14rem]"
-            >
-              <option value="">All merchants</option>
-              {merchants.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </Select>
+        <div className="min-w-0">
+          <div className="flex gap-4 items-end justify-between mb-4 flex-wrap">
+            <div>
+              <Label htmlFor="filter-merchant">Filter by merchant</Label>
+              <Select
+                id="filter-merchant"
+                value={filterMerchant}
+                onChange={(e) => handleFilterMerchantChange(e.target.value)}
+                className="min-w-[14rem]"
+              >
+                <option value="">All merchants</option>
+                {merchants.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="flex items-center gap-4 pb-2 font-mono text-[10.5px] uppercase tracking-[0.12em] tabular-nums">
+              <span className="text-slate-500">
+                <span className="text-slate-900">{total}</span> total
+              </span>
+              {!loading && investigations.length > 0 && (
+                <span className="text-red-600">
+                  <span className="text-red-500">{incidentCount}</span> incidents on page
+                </span>
+              )}
+            </div>
           </div>
-          <span className="text-xs text-slate-400 pb-2 tabular-nums">{total} total</span>
-        </div>
 
-        {loading && (
-          <Card className="p-5">
-            <LoadingRow>Loading investigations…</LoadingRow>
-          </Card>
-        )}
-        {error && <ErrorText>{error}</ErrorText>}
-        {!loading && !error && investigations.length === 0 && (
-          <EmptyState>No investigations match this filter.</EmptyState>
-        )}
-        {!loading && investigations.length > 0 && (
-          <Card>
-            <ul className="divide-y divide-slate-100">
-              {investigations.map((inv) => (
-                <li key={inv.id}>
-                  <Link
-                    href={`/investigations/${inv.id}`}
-                    className="px-4 py-3.5 flex justify-between items-center gap-4 hover:bg-slate-50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
+          {loading && (
+            <Card className="p-5">
+              <LoadingRow>Loading investigations</LoadingRow>
+            </Card>
+          )}
+          {error && <ErrorText>{error}</ErrorText>}
+          {!loading && !error && investigations.length === 0 && (
+            <EmptyState>No investigations match this filter.</EmptyState>
+          )}
+          {!loading && investigations.length > 0 && (
+            <Card>
+              <ul className="divide-y divide-slate-100">
+                {investigations.map((inv, i) => (
+                  <li key={inv.id}>
+                    <Link
+                      href={`/investigations/${inv.id}`}
+                      className="group relative px-4 py-4 flex justify-between items-center gap-4 hover:bg-sky-50 transition-colors"
+                    >
                       <span
-                        className={`w-1.5 h-8 rounded-full shrink-0 ${
-                          inv.incident_detected ? "bg-red-400" : "bg-slate-200"
+                        className={`absolute left-0 top-2 bottom-2 w-[2px] ${
+                          inv.incident_detected
+                            ? "bg-red-400 shadow-[0_0_10px_var(--danger)]"
+                            : "bg-slate-300"
                         }`}
                         aria-hidden="true"
                       />
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <Badge variant={inv.incident_detected ? "danger" : "neutral"}>
-                            {inv.incident_detected ? "Incident" : "No incident"}
-                          </Badge>
-                          <span className="text-xs text-slate-400 tabular-nums">
-                            {inv.evidence_event_count} event
-                            {inv.evidence_event_count === 1 ? "" : "s"}
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-400 mt-0.5 truncate">
-                          {new Date(inv.created_at).toLocaleString()}
+                      <div className="flex items-center gap-4 min-w-0">
+                        <span className="font-mono text-[10px] text-slate-300 tabular-nums w-5 shrink-0">
+                          {String(i + 1).padStart(2, "0")}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <Badge variant={inv.incident_detected ? "danger" : "neutral"}>
+                              {inv.incident_detected ? "Incident" : "No incident"}
+                            </Badge>
+                            <span className="font-mono text-[11px] text-slate-500 tabular-nums">
+                              {inv.evidence_event_count} event
+                              {inv.evidence_event_count === 1 ? "" : "s"}
+                            </span>
+                            {merchantNames.get(inv.merchant_id) && (
+                              <span className="text-sm text-slate-900 truncate">
+                                {merchantNames.get(inv.merchant_id)}
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-mono text-[11px] text-slate-400 mt-1 truncate">
+                            {new Date(inv.created_at).toLocaleString()} · {inv.id.slice(0, 8)}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    <span className="text-slate-500 text-xs shrink-0 font-medium">
-                      {inv.dominant_signal_event_type ?? "—"}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="text-right">
+                          <div className="font-mono text-xs text-slate-700">
+                            {inv.dominant_signal_event_type ?? "—"}
+                          </div>
+                          {inv.dominant_signal_share && (
+                            <div className="mt-1.5 w-24 h-[3px] bg-slate-200 ml-auto">
+                              <div
+                                className={`h-full ${
+                                  inv.incident_detected ? "bg-red-400" : "bg-[var(--accent)]"
+                                }`}
+                                style={{
+                                  width: `${Math.min(100, Number(inv.dominant_signal_share) * 100)}%`,
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                        <span className="text-[var(--accent)] opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all">
+                          →
+                        </span>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </Card>
+          )}
+        </div>
       </div>
     </main>
   );

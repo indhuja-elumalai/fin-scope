@@ -144,7 +144,8 @@ section -- see section 9.
 
 ## 7. Technology stack
 
-- Frontend: Next.js, TypeScript, Tailwind CSS
+- Frontend: Next.js, TypeScript, Tailwind CSS -- a dark "machine console"
+  design system (see section 12, "Frontend -- Machine-Console UI")
 - Backend: Python, FastAPI, Pydantic
 - Database: PostgreSQL (local Docker for development; Neon later)
 - Cache/queue: Redis (local Docker for development; managed Redis later)
@@ -269,6 +270,7 @@ updated metrics view over those results.
 | 8 | Outcome Verification | Verify an executed action's actual outcome against what Phase 5 projected | ✅ COMPLETE |
 | 9 | Real Claude Reasoning + AI Evaluation | Wire the real Anthropic API through the existing Phase 4 provider boundary, plus a controlled offline evaluation module | ✅ COMPLETE |
 | 10 | Razorpay TEST Integration | Real Razorpay TEST-mode client (M1), webhook ingestion (M2), policy-gated TEST action + outcome verification (M3) | 🔶 MILESTONES 1-3 COMPLETE (Milestone 4 live-call pending owner approval) |
+| UI | Machine-Console Frontend | Command center + dark HUD design system across every page, presentation-only | ✅ COMPLETE |
 
 ### Phase 1 — Foundation
 
@@ -456,6 +458,8 @@ Delivered:
   highlighting, and a small shared component set
   (`apps/web/components/ui.tsx`) applied consistently across
   merchants/events/investigations in place of ad hoc per-page styling.
+  (The light theme has since been replaced by the dark machine-console
+  theme -- see "Frontend -- Machine-Console UI" below.)
 
 Verification: all checks in `scripts/verify-phase-4.sh` were executed and
 passed on the project owner's machine -- Docker Compose Postgres + Redis
@@ -1148,6 +1152,64 @@ for this phase's endpoints yet (see section 9).
 
 Status: MILESTONES 1-3 COMPLETE; MILESTONE 4 NOT STARTED
 
+### Frontend -- Machine-Console UI
+
+A presentation-only redesign of `apps/web` (branch
+`feat/robotic-ui-overhaul`), replacing the earlier light theme with a dark
+"machine console" design system that matches what FIN-SCOPE is: an
+operator watching a bounded, auditable machine decide and act.
+
+What it delivers:
+- **Design system** (`apps/web/app/globals.css`): dark instrument-panel
+  tokens, a gridded backdrop with faint scanlines, and HUD utility classes
+  -- `.hud-panel` (bracketed-corner panels), `.chamfer` (cut-corner
+  controls), `.telemetry` (mono uppercase micro-labels), `.led` (status
+  lights) -- plus motion (radar sweep, pipeline flow, boot-in) that is
+  switched off under `prefers-reduced-motion`. Chakra Petch is the display
+  face; Geist / Geist Mono remain the body and data faces.
+- **Palette re-pointing**: the Tailwind palette itself is remapped (the
+  slate scale is inverted; each hue's pale steps become dark tints and its
+  dark steps become bright text). Every existing page -- including the
+  full investigation detail flow -- inherits the theme through the classes
+  it already uses, so no page logic had to be rewritten. The FACT /
+  INFERENCE / UNCERTAINTY / PROJECTED / DECISION / POLICY / SANDBOX /
+  VERIFICATION / RAZORPAY badge colours keep their distinct meanings.
+- **Shared primitives** (`apps/web/components/ui.tsx`): every existing
+  component restyled with unchanged props, plus two new ones, `Telemetry`
+  and `Led`. New `components/status-bar.tsx`: a bottom telemetry strip
+  with a live UTC clock and the system's fixed guarantees.
+- **Navigation**: reticle logo mark, coded links (01-04) with a glowing
+  active rail, and the TEST-environment / API-health indicator.
+- **Command center** (`/`): hero, a radar status dial driven by the real
+  `/health` subsystem checks (it accepts both the nested `checks` shape and
+  flat `{database, redis}` fields), indexed stat tiles, a recent-
+  investigations activity log, command shortcuts, and an animated
+  control-loop pipeline in which the single AI step (reasoning) is
+  highlighted separately from the deterministic steps.
+- **Investigations / Merchants / Events**: two-column operator layouts
+  (form panel + list), dominant-signal share bars on investigations,
+  merchant registry cards, and an event stream with concerning/nominal
+  status lights. The investigation detail page gains a system-path header,
+  a red "Incident detected" title, and a stage-counting control-loop
+  stepper.
+
+What it deliberately does not change: no backend code, no `app/api/*`
+proxy route, and no `lib/backend.ts`. On every page, state, data fetching,
+form submission and navigation are unchanged -- every form field, binding,
+submit handler and link from `main` is still present. The only additions
+are display-only values derived from data the pages already loaded (for
+example, the incidents-on-page count). Like the rest of the app, every
+number shown comes from a real endpoint; nothing is a fabricated metric.
+
+Verification: `npx tsc --noEmit`, `npm run lint` and `npm run build` all
+pass. Every page (command center, investigations list, the full
+investigation detail flow from reasoning through Razorpay TEST
+verification, merchants, events, event detail) was exercised in a browser
+against a locally running FIN-SCOPE API with real data, at both narrow
+(~560px) and desktop (1366px) widths.
+
+Status: COMPLETE
+
 ## 13. Phase completion status
 
 Phases 1-8 are COMPLETE (implemented, independently verified,
@@ -1187,10 +1249,9 @@ implied:
    beyond local development, no CI workflow, no hosting config) -- section
    15's local Docker Compose setup is the only documented way to run
    FIN-SCOPE today.
-6. A broader "command center" product-UI redesign has been scoped (branch
-   `product-ui-command-center`) but not started -- that branch currently
-   contains no code changes beyond `main`. The existing frontend (Phases
-   1-8, section 6) is the current, functional UI.
+6. The "command center" product-UI redesign is done: the machine-console
+   UI (section 12, "Frontend -- Machine-Console UI") restyles every page
+   without changing its behaviour.
 
 ## 14. Verification results
 
@@ -1309,7 +1370,8 @@ cp .env.local.example .env.local   # set API_KEY to match the backend's
 npm run dev
 ```
 
-Then visit `http://localhost:3000` for backend health,
+Then visit `http://localhost:3000` for the command center (live system
+status, investigation totals, recent activity),
 `http://localhost:3000/merchants` to create/list merchants,
 `http://localhost:3000/events` to ingest and inspect financial events, and
 `http://localhost:3000/investigations` to run and inspect incident
@@ -1453,8 +1515,11 @@ layer directly; none of this suite makes a real network call to Razorpay.
   CI workflow, and no hosting/platform config for any environment. Local
   Docker Compose (section 15) is the only documented way to run
   FIN-SCOPE.
-- A broader product-UI "command center" redesign is scoped but not
-  started; see section 13.
+- The frontend commits to a single dark theme; there is no light mode
+  or theme toggle. The palette is re-pointed globally in
+  `apps/web/app/globals.css`, so new code should keep using the existing
+  Tailwind colour vocabulary (for example `bg-emerald-50 text-emerald-700`)
+  rather than raw hex values, or it will not match the theme.
 - Reasoning re-runs are append-only: each call to `POST .../reason`
   persists a new `investigation_reasoning` row rather than updating or
   deduplicating a previous one, even if the evidence has not changed.
