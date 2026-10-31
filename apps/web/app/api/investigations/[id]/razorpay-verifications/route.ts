@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { backendFetch } from "@/lib/backend";
+import { backendFetch } from "@/lib/proxy";
 
 // Append-only Razorpay TEST outcome-verification history across every
 // razorpay action for this investigation, newest first. See
