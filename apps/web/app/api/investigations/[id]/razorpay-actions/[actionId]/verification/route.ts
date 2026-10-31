@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { backendFetch } from "@/lib/backend";
+import { backendFetch } from "@/lib/proxy";
 
 // GET returns the single, idempotent Razorpay TEST outcome verification
 // tied to this specific razorpay action_id -- 404 if this action has not

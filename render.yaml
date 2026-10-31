@@ -1,0 +1,43 @@
+# Render Blueprint for the FIN-SCOPE API.
+# Render dashboard -> New -> Blueprint -> pick this repository.
+# Postgres (Neon) and Redis (Upstash) are external free services; paste their
+# URLs when Render prompts for the `sync: false` values. See docs/DEPLOYMENT.md.
+services:
+  - type: web
+    name: fin-scope-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: ./apps/api
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      # Comma-separated browser origins allowed by CORS (no trailing slash).
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://fin-scope-tawny.vercel.app
+      # postgresql+psycopg://USER:PASSWORD@HOST/DB?sslmode=require  (Neon)
+      - key: DATABASE_URL
+        sync: false
+      # rediss://default:PASSWORD@HOST:6379  (Upstash, TLS)
+      - key: REDIS_URL
+        sync: false
+      # Shared secret between the Vercel route handlers and this API.
+      # Render generates it; copy the same value into Vercel's API_KEY.
+      - key: API_KEY
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Razorpay TEST keys only (rzp_test_...). Never live keys.
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_TEST_MODE_CONFIRMED
+        sync: false
+      - key: RAZORPAY_DEFAULT_MERCHANT_ID
+        sync: false

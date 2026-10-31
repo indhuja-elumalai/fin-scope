@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { backendFetch } from "@/lib/backend";
+import { backendFetch } from "@/lib/proxy";
 
 // Append-only sandbox action history across every decision for this
 // investigation, newest first. See app.domain.actions.list_actions.

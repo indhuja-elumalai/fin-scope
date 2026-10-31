@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { backendFetch } from "@/lib/backend";
+import { backendFetch } from "@/lib/proxy";
 
 // GET returns the single, idempotent outcome verification tied to this
 // specific action_id -- 404 if this action has not been verified yet (a

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { backendFetch } from "@/lib/backend";
+import { backendFetch } from "@/lib/proxy";
 
 // GET returns the single, idempotent sandbox action tied to this specific
 // decision_id -- 404 if no action has been attempted for it yet (a normal,

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { backendFetch } from "@/lib/backend";
+import { backendFetch } from "@/lib/proxy";
 
 export async function GET(request: NextRequest) {
   const response = await backendFetch(`/v1/merchants${request.nextUrl.search}`);
